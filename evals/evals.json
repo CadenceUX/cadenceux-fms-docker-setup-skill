@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "prompt": "I've downloaded FileMaker Server 26 and want to install it on Docker Desktop on my Mac.",
+      "expected": "Triggers the skill; follows the pre-flight checks, builds from Claris's Dockerfile (not fms_Docker_Installer.sh), pins ubuntu:24.04, creates named volumes, runs the container, and walks through the assisted-install wizard."
+    },
+    {
+      "prompt": "FileMaker Server's Admin Console is showing 89% disk usage but I don't think that's right.",
+      "expected": "Triggers the skill via the disk-usage symptom trigger; identifies a bind-mounted install folder as the likely cause and points to the troubleshooting reference's disk-usage section rather than guessing."
+    },
+    {
+      "prompt": "I ran docker rm on my FMS container and now fmsadmin says command not found, but the databases still show up in the volume.",
+      "expected": "Triggers the skill via the 'FMS software disappearing after a container was recreated' symptom; recognizes the container-vs-image trap and walks through reinstalling on top of the existing data via troubleshooting.md, then recommends committing an image going forward."
+    }
+  ],
+  "near_misses": [
+    {
+      "prompt": "Can you write me a FileMaker script that finds all overdue invoices?",
+      "expected_to_trigger": false,
+      "why": "FileMaker Pro script authoring, not server/Docker infrastructure — should route to fmp-dev-* skills instead."
+    },
+    {
+      "prompt": "How do I set up a Windows Server VM to host FileMaker Server?",
+      "expected_to_trigger": false,
+      "why": "Not Docker-related; this skill is specifically Docker-container installs, not general Windows/VM hosting."
+    }
+  ]
+}
