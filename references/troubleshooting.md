@@ -192,6 +192,22 @@ that conflicts on those same ports and fails to bind — that failure is expecte
 anything is actually broken. A full `docker restart <container>` makes `fmshelper` respawn its
 own Nginx child against the newly-installed binary correctly.
 
+## `command not found` / `No such file` for a Linux command during an interactive step
+
+**Symptom:** `apt-get: command not found`, `systemctl: command not found`, or `No such file or
+directory` on a path under `/opt/FileMaker/...` — during Step 4, 8 or 9.
+
+**Cause:** almost always the command was typed into the developer's **macOS host shell** instead
+of inside the container. Those commands and paths only exist in the container, so the error
+reads as a generic failure rather than an obvious "wrong shell" signal. Seen in practice when an
+agent opened a terminal tab already `docker exec -it`'d into the container (prompt
+`root@fms:/#`) but the developer typed into a different, pre-existing tab (prompt like
+`hostname:~ user$`).
+
+**Fix:** check the prompt string before debugging anything else. If it isn't `root@fms:/#`, run
+`docker exec -it fms bash` and retry there. When handing off an interactive step, name the exact
+tab and prompt to use rather than saying "run this in your terminal."
+
 ## Sample database not showing up
 
 See SKILL.md Step 7 for the fix. Root cause: the assisted installer stages locale-named sample
@@ -200,6 +216,14 @@ folder, and the final "promote to a live, openable file" step doesn't always run
 reliably skipped when installing on top of pre-existing `Data` rather than a truly fresh
 install. Confirm the fix worked via `Event.log`, not just file presence — `ls`-ing the file
 existing doesn't confirm FMS actually opened it.
+
+**A different case — the sample database is absent entirely**, not just unpromoted: no
+`.Sample/` staging file, no `.fmp12` anywhere (`find "/opt/FileMaker/FileMaker Server" -iname
+'*.fmp12'` returns nothing), and `Data/Databases/Sample/` is an empty directory. Seen once on FMS
+26.0.2.219 arm64. The root cause is **not established** — it may be how the wizard's "remove
+sample database" prompt was answered, or a version-specific default for this package. It isn't
+necessarily a broken install, and there is nothing to promote. Don't assert either explanation;
+confirming needs a run that deliberately answers "keep sample" and checks immediately.
 
 ## WebDirect / `/fmi/webd` returns 502 Bad Gateway
 

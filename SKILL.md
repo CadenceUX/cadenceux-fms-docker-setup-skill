@@ -2,7 +2,7 @@
 compatibility: Claude Code
 metadata:
   "Built and maintained": "Darrin Southern from CadenceUX"
-  version: "1.0"
+  version: "1.1"
 name: cadenceux-fms-docker-setup
 description: |
   Installs and configures Claris FileMaker Server in Docker on macOS with Docker Desktop,
@@ -30,8 +30,10 @@ cover the macOS-specific failure modes below.
 26.0.2.219 (Claris's official `fms_*_Ubuntu24_arm64` package), Ubuntu 24.04 base image. The
 same approach should generalize to Intel Macs and native Linux Docker hosts (the container
 itself is architecture-neutral once you match the right FMS package to `uname -m`), but only
-the arm64/macOS path has actually been run start-to-finish. Flag this to the developer if the
-host differs, rather than assuming identical behaviour.
+the arm64/macOS path has actually been run start-to-finish (twice now — a second full run on a
+macOS 15 / Apple Silicon host with 16GB RAM and ~7.75GB given to Docker Desktop, same FMS build,
+needed no change to any command). Flag this to the developer if the host differs, rather than
+assuming identical behaviour.
 
 ## Why not just follow Claris's own Docker installer script?
 
@@ -212,7 +214,15 @@ don't proceed to install until this checks out.
 ## Step 4 — Install FileMaker Server
 
 This step is interactive (a curses-style assisted-install wizard) and needs a real TTY. Run it
-from the developer's own terminal, not through a non-interactive `docker exec`:
+from the developer's own terminal, not through a non-interactive `docker exec`.
+
+**When handing this step to the developer, name the exact terminal — every time.** Say which
+tab or window to use and what its prompt should look like: inside the container it reads
+`root@fms:/#`, while the developer's normal macOS shell reads something like `hostname:~ user$`.
+If the agent opened a terminal tab already `docker exec -it`'d into the container, say "use the
+tab showing `root@fms:/#`". Otherwise a developer with several terminals open will type the
+command into their usual macOS shell — see "`command not found` for a Linux command" in the
+troubleshooting reference for the symptom.
 
 ```bash
 docker exec -it fms bash
@@ -234,6 +244,17 @@ invent them.
 **It will likely warn about an outdated bundled Nginx with known CVEs and ask whether to
 continue.** Say yes — this is expected on Ubuntu 24.04's apt-provided Nginx (1.24.0), and gets
 patched in Step 6.
+
+**Two lines the installer prints at the end don't apply inside Docker — don't act on them:**
+
+- *"To configure FileMaker Server, open Admin Console at `https://172.17.0.2/admin-console`"* —
+  that IP is the container's internal Docker bridge address and is **not reachable from the host
+  browser**. Use `https://localhost/admin-console` (or `https://localhost:8443/admin-console` if
+  80/443 were remapped in Step 3). Copying the printed URL, finding it dead, and concluding the
+  container is broken is an easy mistake.
+- *"add current user to the group fmsadmin and then restart your system"* — bare-metal install
+  boilerplate. There is no "current user" outside the container in this model and nothing needs
+  a host restart. Safe to ignore.
 
 ## Step 5 — Lock in the install immediately
 
@@ -284,6 +305,18 @@ Re-commit the image (Step 5) after this succeeds.
 
 ## Step 7 — Promote the sample database (if missing)
 
+There are two different "missing" outcomes — check which one you have before fixing anything:
+
+- **Stuck in staging** — the file exists hidden as `.Sample/en_FMServer_Sample` but was never
+  promoted. Fixed below.
+- **Absent entirely** — seen on a second run (FMS 26.0.2.219, arm64): `Data/Databases/Sample/`
+  was an empty directory, there was no `.Sample` staging file, and `find "/opt/FileMaker/FileMaker
+  Server" -iname '*.fmp12'` returned nothing. The cause is **not established** — it may be how
+  the wizard's "remove sample database" prompt was answered, or this Docker/arm64 package may not
+  ship one by default. Don't state either as fact. Treat it as a possible outcome that isn't
+  necessarily a broken install, tell the developer, and don't hunt for a fix that isn't there.
+  Confirming needs a run that deliberately answers "keep sample" and checks immediately.
+
 Check first:
 
 ```bash
@@ -325,10 +358,28 @@ tested) and importing with `fmsadmin certificate import <cert> --keyfile <key> -
 20408), even when the key/password pair is independently verified correct with OpenSSL. This
 looks like a genuine bug or unsupported path specific to `--keyfile` external-key import.
 
+**No Homebrew?** Don't default to installing Homebrew — a system-wide package manager is a much
+bigger ask than one binary. Offer the direct download first. It comes from the mkcert
+maintainer's own stable redirect (documented in mkcert's release notes) and needs no sudo and no
+package manager:
+
+```bash
+curl -fsSL "https://dl.filippo.io/mkcert/latest?for=darwin/arm64" -o mkcert
+chmod +x mkcert
+file mkcert          # confirm a real Mach-O executable of plausible size before running it
+./mkcert -version
+```
+
+Swap `darwin/arm64` for `darwin/amd64`, `linux/amd64` etc. to match the host. `/usr/local/bin` is
+root-owned on stock macOS, so to avoid sudo keep the binary in `~/bin/` (or any directory already
+on `PATH`) and call it by full path — `~/bin/mkcert -install`, `~/bin/mkcert -CAROOT` — unless
+that directory is actually on `PATH`. The `mkcert` calls in the steps below assume it resolves;
+substitute the full path if not.
+
 **The working path:** let FMS generate its own key, and only bring your own signed certificate.
 
 ```bash
-# 1. Install mkcert (once)
+# 1. Install mkcert (once) — or use the direct download above if `brew` isn't installed
 brew install mkcert
 
 # 2. Inside the container, have FMS generate its own CSR + key (needs the Admin Console
@@ -419,6 +470,9 @@ and enable whichever the developer actually needs; don't assume any of them came
 base install.
 
 ## Verifying the whole install
+
+From the host, use `https://localhost[:port]/admin-console` — never the container IP the
+installer prints (see Step 4).
 
 ```bash
 docker exec fms systemctl is-active fmshelper          # expect: active

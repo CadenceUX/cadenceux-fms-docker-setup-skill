@@ -3,7 +3,7 @@
 A Claude Code skill for installing and configuring Claris FileMaker Server inside a Docker
 container. Verified end-to-end on macOS (Apple Silicon) with Docker Desktop, using Claris's
 official arm64 Ubuntu 24.04 build, and hardened through three rounds of real corrections since
-first written.
+first written and a second independent install run (v1.1).
 
 Built and maintained by [Darrin Southern](https://www.linkedin.com/in/darrin-southern/) from [CadenceUX](https://cadenceux.com.au).
 

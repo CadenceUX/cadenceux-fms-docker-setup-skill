@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.1 — 2026-09-19
+
+Folds in findings from a second, independent start-to-finish install (FMS 26.0.2.219 arm64, macOS
+15, Apple Silicon, 16GB RAM, ~7.75GB to Docker Desktop) run by another agent. The core sequence —
+Dockerfile build, volumes, `docker run` flags, `docker commit` locking, Nginx CVE patch, mkcert
+CSR/sign/import — worked exactly as documented with no command changes, so those sections are
+untouched. The gaps were assumptions the skill made that didn't hold:
+
+- **Step 8 — no-Homebrew route.** Added a direct-binary download of mkcert (maintainer's own
+  redirect, no sudo, no package manager) as the first-line option when `brew` is absent, with a
+  `file` sanity check and the `~/bin` full-path caveat, instead of implying Homebrew is required.
+- **Step 4 — installer output that misleads inside Docker.** The printed Admin Console URL is the
+  container's internal bridge IP (unreachable from the host); use `https://localhost[:port]/...`.
+  The "add user to fmsadmin group / restart your system" line is bare-metal boilerplate and safe
+  to ignore. Same URL callout added to "Verifying the whole install".
+- **Step 4 — handoff wording.** Interactive steps must name the exact terminal tab and prompt
+  string (`root@fms:/#` vs the macOS shell) every time; a mismatch cost several turns in the
+  source run.
+- **Step 7 / troubleshooting — sample database.** Separated "stuck in staging" from "absent
+  entirely" (empty `Sample/` dir, no `.fmp12` anywhere). The second case is flagged as
+  **root cause not established** — wizard answer vs version-specific default — rather than
+  asserting either; confirming needs a run that deliberately keeps the sample.
+- **Troubleshooting — new entry:** `command not found` / `No such file` for a Linux command
+  during an interactive step almost always means the host shell, not the container.
+- Verified-environment note updated to record the second successful run.
+
 ## v1.0 — 2026-08-11 (updated 2026-08-11, pre-release)
 
 Initial release. Built directly from a real, start-to-finish FileMaker Server 26.0.2.219
