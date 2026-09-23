@@ -32,8 +32,9 @@ docker exec <container> bash -c "apt-get update && apt install /tmp/filemaker-se
 # Data/CStore contents (admin account, license, sample DB staging) rather than starting fresh
 ```
 
-Re-apply the Nginx patch too (Step 6 in SKILL.md) — that was also lost, since it's the same
-writable-layer issue.
+Re-apply the Nginx patch too if the build is 26.0.2 or earlier (Step 6 in SKILL.md) — that was
+also lost, since it's the same writable-layer issue. On 26.0.3+ read Step 6 first: Claris no
+longer wants it.
 
 **Prevention (do this from the start, not just after a loss):**
 
@@ -191,6 +192,31 @@ plain `systemctl restart nginx` targets a *different*, disabled, generic `nginx.
 that conflicts on those same ports and fails to bind — that failure is expected and not a sign
 anything is actually broken. A full `docker restart <container>` makes `fmshelper` respawn its
 own Nginx child against the newly-installed binary correctly.
+
+## Admin Console loads in one browser but `http://localhost/admin-console` gives a 404 in another
+
+**Symptom:** the Admin Console works in one place (an agent's browser pane, a bookmark) but the
+developer's own browser shows a 404 or a plain "It works!" page at
+`http://localhost/admin-console/signin`. Seen 2026-09-24.
+
+**Cause:** the URL is `http://`, i.e. port 80 on the Mac. On macOS that's often the built-in
+Apache, not the container — which is why the container publishes `8080:80` in the first place.
+Confirm: `curl -sI http://localhost/ | grep -i '^server'` shows `Apache/2.4.x (Unix)`.
+
+**Fix:** use `https://localhost/admin-console/` (or `:8443` if 443 was remapped). If the
+developer wants plain `http://localhost` to stop landing on Apache, `sudo apachectl stop` does
+it — a system change, so it's their call and their terminal, not the agent's.
+
+## Committed image is hundreds of MB bigger than expected
+
+**Cause:** the installer `.deb` was still in the container's `/tmp` (or apt's cache was full)
+when `docker commit` ran — the commit captures everything in the writable layer. Seen on the
+26.0.3 upgrade: 6.6GB image vs 6.06GB once redone.
+
+**Fix:** `docker exec fms bash -c "rm -f /tmp/*.deb && apt-get clean"`, then commit again to the
+same tags. The new commit is smaller because a commit is always the container's full diff from
+its base image, not a layer on top of the previous commit. Remove the now-untagged oversized
+image with `docker rmi <image id>` once nothing uses it.
 
 ## `command not found` / `No such file` for a Linux command during an interactive step
 

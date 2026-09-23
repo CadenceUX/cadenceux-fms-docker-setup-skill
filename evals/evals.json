@@ -11,6 +11,10 @@
     {
       "prompt": "I ran docker rm on my FMS container and now fmsadmin says command not found, but the databases still show up in the volume.",
       "expected": "Triggers the skill via the 'FMS software disappearing after a container was recreated' symptom; recognizes the container-vs-image trap and walks through reinstalling on top of the existing data via troubleshooting.md, then recommends committing an image going forward."
+    },
+    {
+      "prompt": "Claris released a FileMaker Server update overnight. My FMS runs in Docker — can you update it?",
+      "expected": "Triggers the skill; runs the staleness check against Claris's updater feed and the container's dpkg version; asks the developer for the licence-linked Linux zip rather than downloading it; then follows U1–U7: diff the packages, snapshot to a dated pre-upgrade tag, stop the container and back up all four volumes, dry-run the .deb, hand the interactive install to a named terminal tab with the licence prompt left to the developer, verify, delete the .deb before committing. On 26.0.3+ does not re-apply the Step 6 Nginx patch without asking."
     }
   ],
   "near_misses": [

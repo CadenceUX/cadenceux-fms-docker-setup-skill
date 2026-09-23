@@ -2,21 +2,21 @@
 compatibility: Claude Code
 metadata:
   "Built and maintained": "Darrin Southern from CadenceUX"
-  version: "1.1"
+  version: "1.2"
 name: cadenceux-fms-docker-setup
 description: |
-  Installs and configures Claris FileMaker Server in Docker on macOS with Docker Desktop,
-  using Claris's official arm64 Ubuntu 24.04 build. Use when asked to install, set up, run, or
-  troubleshoot FileMaker Server on Docker — phrases like "FMS on Docker", "install FMS via
-  Docker", "Dockerize FileMaker Server". Also trigger when FileMaker Server installer files
-  (filemaker-server*.deb, or an fms_*.zip with a Docker folder) sit in the working directory,
-  or on symptoms this runbook resolves: Admin Console showing a wrong disk-usage percentage,
-  "Cannot decrypt the private key file" during certificate import, a missing sample database,
-  Nginx CVE warnings, or FMS software vanishing after a container was recreated. Covers
-  building from Claris's own Dockerfile (their install script can't run on macOS), the
-  assisted-install wizard, a trusted local HTTPS cert via mkcert, and the container-vs-image
-  data-loss trap. Not for FileMaker Pro schema/script/layout work. For OttoFMS on top, see
-  cadenceux-ottofms-docker-setup.
+  Installs, upgrades and configures Claris FileMaker Server in Docker on macOS with Docker
+  Desktop, using Claris's official arm64 Ubuntu 24.04 build. Use when asked to install, set
+  up, upgrade, update, run or troubleshoot FMS on Docker ("FMS on Docker", "Dockerize
+  FileMaker Server", "update FMS in the container", "is my FMS current?"). Also trigger when
+  FMS installer files (filemaker-server*.deb, or an fms_*.zip with a Docker folder) sit in the
+  working directory, or on symptoms it resolves: a wrong Admin Console disk-usage percentage,
+  "Cannot decrypt the private key file" on certificate import, a missing sample database,
+  Nginx CVE warnings, or FMS vanishing after a container was recreated. Covers building from
+  Claris's Dockerfile (their install script can't run on macOS), the install wizard, in-place
+  upgrades with snapshot and volume backup, a trusted mkcert cert, and the
+  container-vs-image data-loss trap. Not for FileMaker Pro schema/script/layout work. For
+  OttoFMS on top, see cadenceux-ottofms-docker-setup.
 ---
 
 # FileMaker Server on Docker — Setup
@@ -26,14 +26,51 @@ built from a real session that hit (and resolved) every trap documented here. It
 generic three-year-old community walkthroughs that predate Claris's own arm64 build and don't
 cover the macOS-specific failure modes below.
 
-**Verified environment:** macOS (Apple Silicon/arm64), Docker Desktop, FileMaker Server
-26.0.2.219 (Claris's official `fms_*_Ubuntu24_arm64` package), Ubuntu 24.04 base image. The
-same approach should generalize to Intel Macs and native Linux Docker hosts (the container
-itself is architecture-neutral once you match the right FMS package to `uname -m`), but only
-the arm64/macOS path has actually been run start-to-finish (twice now — a second full run on a
-macOS 15 / Apple Silicon host with 16GB RAM and ~7.75GB given to Docker Desktop, same FMS build,
-needed no change to any command). Flag this to the developer if the host differs, rather than
+**Verified environment:** macOS (Apple Silicon/arm64), Docker Desktop, Claris's official
+`fms_*_Ubuntu24_arm64` package, Ubuntu 24.04 base image. What has actually been run:
+
+| FMS build | Path | Runs |
+|---|---|---|
+| 26.0.2.219 | Fresh install, Steps 1–9 | 2 (second on macOS 15, 16GB RAM, ~7.75GB to Docker Desktop — no command changes needed) |
+| 26.0.2.219 → 26.0.3.309 | In-place upgrade (see *Upgrading FileMaker Server in place*) | 1 (2026-09-24) |
+
+**A fresh install of 26.0.3 or later has not been run yet.** Steps 1–9 were written against
+26.0.2.219; where 26.0.3 is known to behave differently (Step 6, Nginx) that's called out
+inline, but treat the rest as expected-to-hold rather than verified for newer builds. The same
+approach should generalise to Intel Macs and native Linux Docker hosts (the container itself is
+architecture-neutral once you match the right FMS package to `uname -m`), but only the
+arm64/macOS path has been run. Flag it to the developer if the host differs, rather than
 assuming identical behaviour.
+
+## Is this FMS build current? (staleness check)
+
+This runbook snapshots a vendor product that ships updates every few months. Run this check
+when the developer asks whether their FMS is current, mentions an update or "latest", brings a
+new `fms_*` zip, or before starting a fresh install from an installer they downloaded a while
+ago. It's advisory — never a blocker.
+
+Claris's updater feed is JSON and lists every release per platform. Validated 2026-09-24: it
+reported 26.0.3 for Linux on the day that release was installed.
+
+```bash
+curl -sL --max-time 20 https://www.claris.com/cms/resources/downloads/updaters/product-updaters.txt \
+| python3 -c "import json,sys,re; d=json.load(sys.stdin); v=sorted({re.search(r'\((\d+\.\d+\.\d+)\)',e['version']).group(1) for e in d if e['product'].strip()=='FileMaker Server' and e['platform']=='Linux' and re.search(r'\(\d',e['version'])}, key=lambda s:tuple(map(int,s.split('.')))); print(v[-1])"
+```
+
+Compare that with what the container is running — `docker exec fms dpkg -l filemaker-server`
+(the feed gives `26.0.3`; dpkg adds the build number, `26.0.3.309`). The feed has no download
+URL for Linux; the installer comes from the developer's own licence-linked Claris download, so
+ask them for the zip rather than trying to fetch it. For what changed, read the release notes
+at `https://help.claris.com/en/server-release-notes/content/index.html` — look specifically for
+Linux, Nginx, Ubuntu and install/upgrade notes, since those are what touch this runbook.
+
+If the feed is newer than the container, say so:
+
+> ⚠️ **Newer FileMaker Server available** — the container runs [installed]; Claris's latest
+> Linux release is [latest]. See *Upgrading FileMaker Server in place* below. Separately, this
+> runbook was last verified against 26.0.3.309 — anything newer may behave differently.
+
+If the fetch fails, say the check couldn't run and carry on — don't guess a version.
 
 ## Why not just follow Claris's own Docker installer script?
 
@@ -102,6 +139,12 @@ problem in five seconds up front. Run every check below and resolve or explicitl
    nc -z -w 2 localhost 80 && echo "80 occupied" || echo "80 free"
    nc -z -w 2 localhost 443 && echo "443 occupied" || echo "443 free"
    ```
+   To see *what* holds a port without `sudo`, ask it: `curl -sI http://localhost/ | grep -i
+   '^server'`. On a Mac, port 80 is often the built-in macOS Apache (`Server: Apache/2.4.x
+   (Unix)`) — seen 2026-09-24. That's why the verified container publishes `8080:80`, and it's
+   why typing `http://localhost/admin-console` into a browser returns a 404 from Apache rather
+   than anything from FMS. Always hand the developer the `https://` URL.
+
    If either is occupied, this has a safe, low-stakes default: remap the *host* side only (e.g.
    `8080:80`, `8443:443` — see Step 3) and **tell the developer which ports you chose and why**
    rather than silently deciding — they may prefer to free the conflicting port instead. Don't
@@ -241,9 +284,10 @@ security check and license, choose primary/standard deployment, decline HTTPS tu
 specifically needed, and let the developer choose their own Admin Console credentials — don't
 invent them.
 
-**It will likely warn about an outdated bundled Nginx with known CVEs and ask whether to
+**On 26.0.2 it warns about an outdated bundled Nginx with known CVEs and asks whether to
 continue.** Say yes — this is expected on Ubuntu 24.04's apt-provided Nginx (1.24.0), and gets
-patched in Step 6.
+patched in Step 6. Whether 26.0.3+ still shows this warning on a fresh install hasn't been
+observed yet (see Step 6 for why it may not).
 
 **Two lines the installer prints at the end don't apply inside Docker — don't act on them:**
 
@@ -276,7 +320,22 @@ disaster-recovery `docker run` command (identical to Step 3, but pointing at `fm
 instead of `fmsdocker:prep`) somewhere the developer can find it — see
 `references/troubleshooting.md` for the full recreate-from-image snippet.
 
-## Step 6 — Patch Nginx
+## Step 6 — Patch Nginx (26.0.2 and earlier — check first on 26.0.3+)
+
+**This step is version-dependent. Check the FMS build before running it.**
+
+- **26.0.2 and earlier:** run it as written below.
+- **26.0.3 and later:** Claris changed the approach. The 26.0.3 release notes say Linux installs
+  no longer need `NginxUpdate.sh`, so Ubuntu's own security updates to Nginx apply normally, and
+  the 26.0.3 package no longer ships `NginxUpdate.sh` at all. Seen directly during the 26.0.3
+  upgrade: the installer's pre-install step printed *"Removing Nginx software source… pin-priority…
+  signing key"* and deleted exactly what this step adds (`/etc/apt/sources.list.d/nginx.list`,
+  `/etc/apt/preferences.d/99nginx`, the nginx.org keyring). **Don't re-add them on 26.0.3+
+  without asking the developer** — the installer will just strip them again on the next upgrade,
+  and it's working against Claris's supported path. On a fresh 26.0.3+ install, skip this step
+  unless the wizard actually raises an Nginx CVE warning, and tell the developer which happened.
+  See the upgrade section for the one follow-on decision this creates on containers that were
+  patched under 26.0.2.
 
 ```bash
 docker exec fms bash -c "
@@ -468,6 +527,153 @@ The same `enabled="no"`-by-default pattern applies to the other components liste
 `deployment.xml` (`xdbc` for ODBC/JDBC, `fmdapi` for the Data API, `odata` for OData) — check
 and enable whichever the developer actually needs; don't assume any of them came on with the
 base install.
+
+## Upgrading FileMaker Server in place
+
+Verified once, 2026-09-24: 26.0.2.219 → 26.0.3.309 on the arm64/macOS setup above, with the
+mkcert certificate, WebDirect/Data API enabled and OttoFMS installed — all survived. The
+upgrade is the same `apt install` of the new `.deb` over the running install; what makes it a
+Docker job is doing it so it can be rolled back, and not losing it afterwards.
+
+**Don't use Admin Console's own update prompt for this.** Stick to the steps below so the
+snapshot and volume backup exist before anything changes.
+
+### U1 — Get the new package and compare it with the old one
+
+The developer supplies the `fms_<version>_Ubuntu24_arm64.zip` (licence-linked download — see the
+staleness check). Unzip it next to the previous package and diff what matters:
+
+```bash
+diff fms_<old>/Docker/Dockerfile fms_<new>/Docker/Dockerfile        # changed → the prep image may need rebuilding; stop and plan that first
+diff "fms_<old>/Assisted Install.txt" "fms_<new>/Assisted Install.txt"
+ls fms_<old> fms_<new>                                               # helper scripts added/removed
+```
+
+26.0.2 → 26.0.3: Dockerfile identical; `Assisted Install.txt` gained two accessibility keys;
+`NginxUpdate.sh` was dropped (see Step 6). Also compare the package's dependencies against the
+installed ones once the `.deb` is in the container (U4).
+
+### U2 — Snapshot the container's software
+
+```bash
+docker commit --message "FMS <old build> before upgrade - $(date '+%Y-%m-%d %H:%M')" fms fmsdocker:pre-upgrade-$(date '+%Y%m%d-%H%M')
+docker tag fmsdocker:pre-upgrade-<stamp> fmsdocker:installed
+```
+
+The dated tag is the rollback point. It stays put when `:installed` moves on after the upgrade.
+
+### U3 — Back up the four data volumes (a commit doesn't include them)
+
+Databases, licence, certificates and admin account live in the volumes, not the image. Stop the
+container so no database is open mid-copy, archive each volume with a throwaway container from
+the already-present `fmsdocker:prep` image (no extra image pull), then start it again:
+
+```bash
+B="$PWD/backups/pre-<new version>-$(date '+%Y%m%d-%H%M')"; mkdir -p "$B"
+docker stop -t 120 fms
+for v in fms-cstore fms-data fms-logs fms-wpeconf; do
+  docker run --rm -v $v:/src:ro -v "$B":/dst fmsdocker:prep tar -czf /dst/$v.tgz -C /src .
+done
+docker start fms
+for f in "$B"/*.tgz; do echo "$(basename $f): $(tar -tzf $f | wc -l) entries"; done
+```
+
+Check `fms-data.tgz` actually lists the `.fmp12` files before moving on
+(`tar -tzf "$B/fms-data.tgz" | grep -i fmp12`). Confirm the Admin Console answers again after
+the start (`curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/admin-console/`).
+
+### U4 — Copy the package in and dry-run it
+
+```bash
+docker cp fms_<new>/filemaker-server-<new build>-arm64.deb fms:/tmp/
+docker exec fms bash -c "apt-get update -qq && apt-get install -s /tmp/filemaker-server-<new build>-arm64.deb | grep -E '^(Inst|Remv)|upgraded'"
+```
+
+Expect only `Inst filemaker-server [<old>] (<new> …)` and nothing under `Remv`. If the dry run
+wants to remove packages or pull in a large set of new ones, stop and show the developer before
+installing. (26.0.2 → 26.0.3: one package upgraded, nothing removed or added — the new
+dependency list only swapped OpenCV for `libopenjp2-7`, already present.)
+
+### U5 — Run the upgrade (interactive — developer's terminal)
+
+```bash
+docker exec -it fms bash -c "apt install /tmp/filemaker-server-<new build>-arm64.deb"
+```
+
+Same handoff rules as Step 4: name the exact terminal tab. The licence agreement prompt is the
+developer's to answer — never answer it for them. The installer then preserves the existing
+deployment on its own; on 26.0.3 it printed *"Current Admin Console account information will be
+preserved"* and *"Preserving current … deployment configuration"*, kept the existing MachineID,
+and kept a copy of the old keystore as `CStore/keystore_26.0.2.backup`.
+
+**Output that looks alarming but isn't:**
+
+- `prerm: … /usr/bin/crontab: No such file or directory` — the old package's removal script tries
+  to delete its entry from root's crontab, and the container has no `cron`. There was nothing to
+  delete; the upgrade carries on.
+- *"Removing Nginx software source / pin-priority / signing key"* (26.0.3+) — expected; see Step 6.
+- The container-bridge Admin Console URL and "add current user to fmsadmin … restart" — same
+  bare-metal boilerplate as Step 4. Ignore both.
+- The progress bar stops at 80% and returns to the prompt. That's normal — check with `dpkg`
+  (U6), not the bar.
+
+### U6 — Verify
+
+```bash
+docker exec fms bash -c "dpkg -l filemaker-server | tail -1; dpkg --audit; systemctl is-active fmshelper"
+curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/admin-console/signin
+curl -sk https://localhost[:port]/fmi/data/vLatest/productInfo
+echo | openssl s_client -connect localhost[:port] -servername localhost 2>/dev/null | openssl x509 -noout -issuer
+docker exec fms bash -c "ls '/opt/FileMaker/FileMaker Server/Data/Databases/'"
+```
+
+Expect: `ii` with the new build, no `dpkg --audit` output, `active`, 200, a Data API `OK`, the
+mkcert issuer (not FMS's default), and the databases still present. If OttoFMS is installed,
+check `https://localhost[:port]/otto/` too. Then have the developer sign in to Admin Console
+and confirm the databases are open and the version shown matches.
+
+### U7 — Clean up, then commit
+
+**Delete the `.deb` from `/tmp` *before* committing.** Committing first bakes the ~540MB
+installer into the image — seen on the 26.0.3 run (6.6GB image vs 6.06GB after redoing it). A
+re-commit after deleting does shrink it, because each commit captures the container's full
+diff from its base image, not a diff on top of the previous commit.
+
+```bash
+docker exec fms bash -c "rm -f /tmp/filemaker-server-*.deb && apt-get clean"
+docker commit --message "FMS <new build> upgraded in place - $(date '+%Y-%m-%d %H:%M')" fms fmsdocker:<new build>
+docker tag fmsdocker:<new build> fmsdocker:installed
+```
+
+The disaster-recovery `docker run` in the troubleshooting reference now restores the new build.
+
+### One follow-on decision after 26.0.2 → 26.0.3 (Nginx)
+
+A container patched under 26.0.2 (Step 6) keeps the newer nginx.org build after the upgrade
+(1.30.4 on the verified run), but 26.0.3 removed the nginx.org repository, so that build now
+receives **no further updates**: Ubuntu's own `nginx` (1.24.0 with backported security fixes)
+has a lower version number, so apt never replaces it. Check with
+`docker exec fms apt-cache policy nginx`. Don't pick for the developer — present both:
+
+- **Follow Claris's 26.0.3 model:** `apt-get install --allow-downgrades nginx=<Ubuntu's version>`
+  (take the exact version from `apt-cache policy`), then `docker restart fms` and re-commit.
+  Gets Ubuntu's ongoing security fixes. CVE scanners reading the version string may still flag
+  "1.24.0", even though Ubuntu backports fixes into it.
+- **Keep the nginx.org build:** newer today, but frozen — and re-adding the repository gets
+  stripped again by the next FMS upgrade.
+
+Neither option has been run on the verified container yet; whichever the developer chooses,
+verify with U6 afterwards.
+
+### Rolling back
+
+Not yet exercised — treat as expected-to-work, and say so if it's ever needed. Software only
+(data untouched by the upgrade): recreate the container from the dated tag with the
+disaster-recovery `docker run` in the troubleshooting reference, swapping `fmsdocker:installed`
+for `fmsdocker:pre-upgrade-<stamp>`. If the data was changed too, restore each volume from U3
+into an emptied volume (`docker run --rm -v <vol>:/dst -v "$B":/src fmsdocker:prep sh -c "rm -rf
+/dst/* /dst/.[!.]* ; tar -xzf /src/<vol>.tgz -C /dst"`) with the container stopped. Both
+replace things — confirm with the developer before running either.
 
 ## Verifying the whole install
 

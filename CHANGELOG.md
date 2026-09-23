@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.2 — 2026-09-24
+
+Adds in-place version upgrades, built from a real 26.0.2.219 → 26.0.3.309 upgrade of a running
+container (arm64, macOS, Docker Desktop, with mkcert certificate, WebDirect/Data API and OttoFMS
+already in place — all survived).
+
+- **New section — "Upgrading FileMaker Server in place" (U1–U7).** Compare the new package with
+  the old one (Dockerfile, `Assisted Install.txt`, helper scripts); snapshot the container to a
+  dated `pre-upgrade` tag; back up the four volumes with the container stopped, using the
+  existing `fmsdocker:prep` image for the tar step; `docker cp` the `.deb` in and dry-run it with
+  `apt-get install -s`; run the interactive upgrade in a named terminal tab; verify; delete the
+  `.deb` *before* committing. Documents the harmless-but-alarming installer output (`crontab: No
+  such file`, the 80% progress bar, Nginx source removal). Rollback steps included and marked
+  not yet exercised.
+- **New section — staleness check.** Active pattern against Claris's updater feed
+  (`product-updaters.txt`, JSON), filtered to FileMaker Server / Linux; signal validated live the
+  day 26.0.3 was installed. Advisory message when the container or the runbook is behind.
+- **Step 6 (Nginx) is now version-dependent.** 26.0.3's release notes drop `NginxUpdate.sh`,
+  the package no longer ships it, and its installer removes the nginx.org source, pin and key
+  that Step 6 adds. On 26.0.3+ don't re-add them without asking. The upgrade section covers the
+  resulting decision for containers patched under 26.0.2: the nginx.org build is left installed
+  but frozen, since Ubuntu's `nginx` has a lower version number — both options laid out, neither
+  run yet.
+- **Step 4:** the Nginx CVE warning is now scoped to 26.0.2; not yet observed on a fresh 26.0.3.
+- **Pre-flight port check:** identify what holds a port with `curl -sI`; on macOS, port 80 is
+  often the built-in Apache — the reason for `8080:80`, and why `http://localhost/admin-console`
+  404s in a browser.
+- **Troubleshooting — two new entries:** `http://` Admin Console 404 (macOS Apache on port 80),
+  and an oversized committed image (`.deb` left in `/tmp`).
+- **Verified environment** is now a table of what has actually been run, and states plainly that
+  a fresh 26.0.3+ install hasn't been.
+- Description: adds upgrade/update triggers; tightened to stay under 1024 characters.
+- evals: new upgrade case.
+
 ## v1.1 — 2026-09-19
 
 Folds in findings from a second, independent start-to-finish install (FMS 26.0.2.219 arm64, macOS
