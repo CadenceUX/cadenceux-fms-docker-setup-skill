@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.3 — 2026-09-24
+
+The Nginx follow-on decision from v1.2 has now been run on the verified container: after the
+26.0.3 upgrade, it was switched from the frozen nginx.org 1.30.4 build to Ubuntu's
+`nginx` 1.24.0-2ubuntu7.18.
+
+- **Upgrade section — "Switching to Ubuntu's `nginx` (verified)".** Dry run with
+  `apt-cache madison`, then an install with a temporary `policy-rc.d` (exit 101) so Ubuntu's
+  package can't start the generic `nginx.service` against FMS's own Nginx on 80/443, plus
+  `--force-confdef/--force-confold`. Restart the container, confirm FMS's master process runs the
+  new `/usr/sbin/nginx` with `fms_nginx.conf`, run the U6 checks, commit. Records the expected
+  harmless output and that Ubuntu's package replaces the unused `/etc/nginx/` defaults.
+- **New trap:** remove `policy-rc.d` as its own step. On the verified run, `systemctl is-active
+  nginx` returned `inactive` (exit 3) under `set -e`, which skipped the `rm`. Left in place, it
+  silently blocks every later service start from apt.
+- "Keep the nginx.org build" is still offered but marked not run.
+- Verified-environment table gains the Nginx switch row.
+
 ## v1.2 — 2026-09-24
 
 Adds in-place version upgrades, built from a real 26.0.2.219 → 26.0.3.309 upgrade of a running

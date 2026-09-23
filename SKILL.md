@@ -2,7 +2,7 @@
 compatibility: Claude Code
 metadata:
   "Built and maintained": "Darrin Southern from CadenceUX"
-  version: "1.2"
+  version: "1.3"
 name: cadenceux-fms-docker-setup
 description: |
   Installs, upgrades and configures Claris FileMaker Server in Docker on macOS with Docker
@@ -33,6 +33,7 @@ cover the macOS-specific failure modes below.
 |---|---|---|
 | 26.0.2.219 | Fresh install, Steps 1–9 | 2 (second on macOS 15, 16GB RAM, ~7.75GB to Docker Desktop — no command changes needed) |
 | 26.0.2.219 → 26.0.3.309 | In-place upgrade (see *Upgrading FileMaker Server in place*) | 1 (2026-09-24) |
+| 26.0.3.309 | Switch from frozen nginx.org 1.30.4 to Ubuntu's `nginx` 1.24.0 after the upgrade | 1 (2026-09-24) |
 
 **A fresh install of 26.0.3 or later has not been run yet.** Steps 1–9 were written against
 26.0.2.219; where 26.0.3 is known to behave differently (Step 6, Nginx) that's called out
@@ -655,15 +656,59 @@ receives **no further updates**: Ubuntu's own `nginx` (1.24.0 with backported se
 has a lower version number, so apt never replaces it. Check with
 `docker exec fms apt-cache policy nginx`. Don't pick for the developer — present both:
 
-- **Follow Claris's 26.0.3 model:** `apt-get install --allow-downgrades nginx=<Ubuntu's version>`
-  (take the exact version from `apt-cache policy`), then `docker restart fms` and re-commit.
-  Gets Ubuntu's ongoing security fixes. CVE scanners reading the version string may still flag
-  "1.24.0", even though Ubuntu backports fixes into it.
+- **Follow Claris's 26.0.3 model — switch to Ubuntu's `nginx`.** Gets Ubuntu's ongoing security
+  fixes. CVE scanners reading the version string may still flag "1.24.0", even though Ubuntu
+  backports fixes into it. Verified 2026-09-24 (procedure below).
 - **Keep the nginx.org build:** newer today, but frozen — and re-adding the repository gets
-  stripped again by the next FMS upgrade.
+  stripped again by the next FMS upgrade. Not run.
 
-Neither option has been run on the verified container yet; whichever the developer chooses,
-verify with U6 afterwards.
+#### Switching to Ubuntu's `nginx` (verified)
+
+The rollback point is the `fmsdocker:<new build>` commit from U7, as long as nothing has changed
+since — otherwise commit first. Dry-run, taking the exact version from apt rather than typing it:
+
+```bash
+docker exec fms bash -c 'apt-get update -qq; apt-cache madison nginx'   # the Ubuntu line, e.g. 1.24.0-2ubuntu7.18
+docker exec fms bash -c 'apt-get install -s --allow-downgrades nginx=<ubuntu version> | grep -E "^(Inst|Remv)|DOWNGRADED"'
+```
+
+Expect `nginx` downgraded, `nginx-common` newly installed, nothing removed. Then install with
+**service starts blocked**. Ubuntu's package tries to (re)start the generic `nginx.service`,
+which would fight FMS's own Nginx for ports 80/443 (the same conflict as Step 6's
+`systemctl restart` warning). A `policy-rc.d` returning 101 is the standard Debian/Docker way to
+stop package scripts starting services:
+
+```bash
+docker exec fms bash -c '
+printf "#!/bin/sh\nexit 101\n" > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d
+DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades \
+  -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold nginx=<ubuntu version>
+rm -f /usr/sbin/policy-rc.d'
+docker exec fms ls /usr/sbin/policy-rc.d   # must fail with "No such file" — left behind, it silently blocks every future service start from apt
+```
+
+**Always remove `policy-rc.d` as its own step, never behind `set -e` or `&&` after a status
+check.** Seen on the verified run: `systemctl is-active nginx` correctly returned `inactive`
+(exit code 3), a `set -e` script aborted on it, and the `rm` after it never ran.
+
+Expected output, all fine: `policy-rc.d returned 101, not running 'restart nginx.service'`, and
+*"Not attempting to start NGINX, port 80 is already in use"*. Ubuntu's package replaces the
+default files under `/etc/nginx/` (`nginx.conf`, `mime.types`, `fastcgi_params`); FMS doesn't use
+them — its Nginx runs from `NginxServer/conf/fms_nginx.conf`.
+
+Then check, restart and verify:
+
+```bash
+docker exec fms bash -c 'systemctl is-enabled nginx; /usr/sbin/nginx -v; dpkg --audit'   # disabled; nginx/1.24.0 (Ubuntu); no output
+docker restart -t 135 fms
+docker exec fms bash -c 'ps -eo args | grep "[n]ginx: master"'   # /usr/sbin/nginx -c …/fms_nginx.conf
+```
+
+Run the U6 checks, plus `grep 'Opened database' …/Logs/Event.log | tail` with a timestamp after
+the restart. On the verified run the Admin Console was back in about 20 seconds; Data API,
+WebDirect, OttoFMS and the mkcert certificate all came back unchanged. Finish with
+`apt-get clean` and a commit (e.g. `fmsdocker:<new build>-ubuntu-nginx`, then retag
+`:installed`).
 
 ### Rolling back
 
