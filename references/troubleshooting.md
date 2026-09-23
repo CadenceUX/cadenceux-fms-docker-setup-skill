@@ -23,27 +23,83 @@ docker exec <container> bash -c "ls '/opt/FileMaker/FileMaker Server/CStore/' 2>
 If that directory has content (license file, keys, certs), the data is fine — only the
 application needs reinstalling.
 
-**Fix — reinstall on top of the existing data:**
+**First, rule out the wrong shell.** `fmsadmin: command not found` is also what you get when
+the command was typed into the macOS host shell instead of the container — see "`command not
+found` / `No such file`" below. Check the prompt before assuming the software is gone. Inside the
+container, confirm with `dpkg -l filemaker-server`, and call `fmsadmin` by full path
+(`"/opt/FileMaker/FileMaker Server/Database Server/bin/fmsadmin"`) rather than relying on `PATH`.
+
+**Fix 1 — recreate from a committed image, if one exists (no reinstall needed):**
 
 ```bash
-docker cp /path/to/filemaker-server-*.deb <container>:/tmp/
-docker exec <container> bash -c "apt-get update && apt install /tmp/filemaker-server-*.deb"
-# choose "load previous configuration" when the wizard asks — this reuses the existing
-# Data/CStore contents (admin account, license, sample DB staging) rather than starting fresh
+docker images fmsdocker     # look for :installed, a :<build> tag, or a :pre-upgrade-* tag
 ```
 
-Re-apply the Nginx patch too if the build is 26.0.2 or earlier (Step 6 in SKILL.md) — that was
-also lost, since it's the same writable-layer issue. On 26.0.3+ read Step 6 first: Claris no
-longer wants it.
+If there is one, the software is already saved — recreate the container from it with the
+disaster-recovery `docker run` below, attached to the same four volumes. Confirm with the
+developer before removing the current container, and pick the tag that matches the FMS build the
+data was last used with (newest `:installed` unless the developer says otherwise).
+
+**Fix 2 — reinstall on top of the existing data (only when no committed image exists):**
+
+1. **Back up the four volumes first**, exactly as in SKILL.md's U3 (stop the container, tar each
+   volume with a throwaway `fmsdocker:prep` container, start it again). A reinstall that goes
+   wrong over the only copy of the licence and databases is the worst version of this problem.
+2. **Reinstall the same build the data was last used with**, not simply the newest zip on disk.
+   Installing an older build over data from a newer one isn't a tested path. Ask the developer
+   which build it was running; if they aren't sure, the log volume survived and records it on
+   every start:
+   `docker exec <container> bash -c "grep 'Starting Database Server' '/opt/FileMaker/FileMaker Server/Logs/Event.log' | tail -1"`
+   gives e.g. `Starting Database Server 26.0.3 309(08-26-2026)...` — build 26.0.3.309 (verified
+   2026-09-24). This needs a running container but not a working FMS install. With no container
+   at all, read the log volume through a throwaway one:
+   `docker run --rm -v fms-logs:/logs:ro fmsdocker:prep grep 'Starting Database Server' /logs/Event.log | tail -1`. To move to a newer build, reinstall the old one first, then follow SKILL.md's upgrade
+   section.
+3. Copy the package in (agent can do this) and hand the interactive install to the developer —
+   the wizard needs a real TTY, so it must be `docker exec -it`, run in the developer's own named
+   terminal tab (prompt `root@<hostname>:/#`):
+
+   ```bash
+   docker cp /path/to/filemaker-server-<build>-arm64.deb <container>:/tmp/
+   # developer's terminal:
+   docker exec -it <container> bash
+   apt-get update && apt install /tmp/filemaker-server-<build>-arm64.deb
+   ```
+
+   Choose "load previous configuration" when the wizard asks. That reuses the existing
+   Data/CStore contents (admin account, licence, sample DB staging) instead of starting fresh.
+4. **Re-apply what lived in the writable layer**, which was lost along with the software. On
+   26.0.2 or earlier, that includes the Nginx patch (SKILL.md Step 6); on 26.0.3+ read Step 6
+   first, since Claris no longer wants it. Publishing settings in
+   `Admin/conf/deployment.xml` aren't in any of the four volumes either — re-check WebDirect,
+   Data API, OData and ODBC (SKILL.md Step 9) rather than assuming they came back.
+5. Commit straight away (SKILL.md Step 5 — delete the `.deb` from `/tmp` and `apt-get clean`
+   first).
 
 **Prevention (do this from the start, not just after a loss):**
 
 ```bash
+docker exec <container> bash -c "rm -f /tmp/*.deb && apt-get clean"
 docker commit --message "FMS installed - $(date '+%Y-%m-%d %H:%M')" <container> fmsdocker:installed
 ```
 
 Re-run after every apt-level change. Recreate the container from `fmsdocker:installed` (not
-`fmsdocker:prep`) going forward:
+`fmsdocker:prep`) going forward. **Copy the current container's real settings rather than
+trusting the example values below** — read them before removing anything:
+
+```bash
+docker inspect <container> --format 'name={{.Name}} host={{.Config.Hostname}} mem={{.HostConfig.Memory}} cpus={{.HostConfig.NanoCpus}} ports={{json .HostConfig.PortBindings}}'
+docker inspect <container> --format '{{range .Mounts}}{{.Name}} -> {{.Destination}}{{"\n"}}{{end}}'
+```
+
+(`Memory` is in bytes and `NanoCpus` is CPUs × 10⁹; `0` means no limit was set.)
+
+**If the container is already gone**, there's nothing to inspect. Ask the developer for the
+ports, memory and CPUs they used, or look for them where they may have been recorded: a saved
+`docker run` command, shell history (`grep 'docker run' ~/.zsh_history`, with their OK — it's
+their history), or Docker Desktop's container list if it still shows the removed one. The
+volume names are recoverable from `docker volume ls --filter name=fms-`. Say which values were
+confirmed and which were assumed before running anything.
 
 ```bash
 docker run -d \
@@ -52,9 +108,9 @@ docker run -d \
   --privileged \
   --restart unless-stopped \
   --stop-timeout 135 \
-  --memory 4096m \
-  --cpus 2 \
-  -p 8080:80 -p 8443:443 -p 2399:2399 -p 5003:5003 \
+  --memory <MEM> \
+  --cpus <CPUS> \
+  -p <HTTP_PORT>:80 -p <HTTPS_PORT>:443 -p 2399:2399 -p 5003:5003 \
   --volume fms-data:"/opt/FileMaker/FileMaker Server/Data" \
   --volume fms-cstore:"/opt/FileMaker/FileMaker Server/CStore" \
   --volume fms-wpeconf:"/opt/FileMaker/FileMaker Server/Web Publishing/publishing-engine/conf" \
@@ -203,7 +259,7 @@ developer's own browser shows a 404 or a plain "It works!" page at
 Apache, not the container — which is why the container publishes `8080:80` in the first place.
 Confirm: `curl -sI http://localhost/ | grep -i '^server'` shows `Apache/2.4.x (Unix)`.
 
-**Fix:** use `https://localhost/admin-console/` (or `:8443` if 443 was remapped). If the
+**Fix:** use `https://localhost[:port]/admin-console/` (see SKILL.md's conventions for `[:port]`). If the
 developer wants plain `http://localhost` to stop landing on Apache, `sudo apachectl stop` does
 it — a system change, so it's their call and their terminal, not the agent's.
 

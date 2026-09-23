@@ -4,7 +4,7 @@ A Claude Code skill for installing and configuring Claris FileMaker Server insid
 container. Verified end-to-end on macOS (Apple Silicon) with Docker Desktop, using Claris's
 official arm64 Ubuntu 24.04 build, and hardened through three rounds of real corrections since
 first written, a second independent install run (v1.1), and a real in-place upgrade from
-26.0.2 to 26.0.3 (v1.2), including the move to Ubuntu's own Nginx that 26.0.3 expects (v1.3).
+26.0.2 to 26.0.3 (v1.2), including the move to Ubuntu's own Nginx that 26.0.3 expects (v1.3), then tightened from an eval run of the skill against a no-skill baseline (v1.4).
 
 Built and maintained by [Darrin Southern](https://www.linkedin.com/in/darrin-southern/) from [CadenceUX](https://cadenceux.com.au).
 

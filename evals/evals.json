@@ -15,6 +15,10 @@
     {
       "prompt": "Claris released a FileMaker Server update overnight. My FMS runs in Docker — can you update it?",
       "expected": "Triggers the skill; runs the staleness check against Claris's updater feed and the container's dpkg version; asks the developer for the licence-linked Linux zip rather than downloading it; then follows U1–U7: diff the packages, snapshot to a dated pre-upgrade tag, stop the container and back up all four volumes, dry-run the .deb, hand the interactive install to a named terminal tab with the licence prompt left to the developer, verify, delete the .deb before committing. On 26.0.3+ does not re-apply the Step 6 Nginx patch without asking."
+    },
+    {
+      "prompt": "I tried installing FMS in Docker last month and gave up. Can you set it up properly from scratch now?",
+      "expected": "Triggers the skill. Pre-flight check 7 finds leftover fms-* volumes, an old container or fmsdocker images, and explains that docker volume create would silently reuse old data. Asks whether to reuse, rename or back up and remove, and removes nothing without an explicit yes. Confirms the real container name, and fills Step 3's MEM, CPUS and port placeholders from the pre-flight results instead of fixed values."
     }
   ],
   "near_misses": [

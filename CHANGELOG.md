@@ -1,5 +1,56 @@
 # Changelog
 
+## v1.4 — 2026-09-24
+
+Fixes from an eval run of v1.3: four eval prompts, each run once with the skill and once
+without, all plan-only. Every case passed; the with-skill run also flagged these gaps. No new
+install or upgrade was run for this release; the new commands were checked read-only against
+the live 26.0.3.309 container.
+
+- **Troubleshooting — "FileMaker Server disappeared" rewritten.** The old reinstall fix ran the
+  interactive wizard through a non-interactive `docker exec` (no `-it`), so it couldn't work.
+  It now:
+  - rules out the wrong shell first
+  - prefers recreating from a committed image, so no reinstall is needed
+  - backs up the volumes before any reinstall
+  - reinstalls the same build the data last ran, read from `Event.log`'s
+    `Starting Database Server <version> <build>` line (verified)
+  - uses `docker exec -it` in a named terminal tab
+  - re-checks the Step 6 Nginx patch and the publishing settings, since `deployment.xml` isn't in
+    any of the four volumes
+  - deletes the `.deb` before committing
+- **U2 — rollback tag.** `STAMP` is set once and reused for the commit and the tag. Building the
+  timestamp twice broke the tag whenever the minute changed between the two commands.
+- **Step 5 — delete the `.deb` and run `apt-get clean` before committing**, the same lesson as U7.
+  A fresh install no longer bakes the ~540MB installer into `fmsdocker:installed`.
+- **Step 4 — Nginx wording.** No longer calls Ubuntu's 1.24.0 plainly "outdated/CVE". It explains
+  the warning goes by version number, that Ubuntu backports fixes without changing that number,
+  and that Claris's guidance changed between 26.0.2 and 26.0.3. This removes the conflict with
+  the upgrade section's advice to switch back to Ubuntu's package.
+- **Step 4 — `docker cp` into `/tmp` first.** The temporary bind-mount suggestion is removed; a
+  lingering bind mount is what causes the disk-usage false alarm.
+- **Step 3 — no hardcoded host values.** Memory, CPUs and the HTTP/HTTPS host ports are now
+  placeholders, with a table saying where each comes from and what the verified runs used.
+  Every URL uses the `[:port]` convention.
+- **Troubleshooting — recreate snippet.** Uses the same placeholders, and says to read the
+  current container's real settings with `docker inspect` (checked against the live container)
+  before removing it.
+- **New pre-flight check 7 — existing containers, volumes and images.** `docker volume create`
+  on an existing name silently does nothing, so a "fresh" install could land on old data.
+  Existing volumes need an explicit decision, and a backup before any removal.
+- **New "Two conventions" section.** Confirm the real container name with `docker ps` instead of
+  assuming `fms`; the handoff prompt comes from the container's hostname, not its name (seen: a
+  container named `docker` with hostname `fms`). Also defines `[:port]`.
+- **From a second, targeted re-check of v1.4:**
+  - Pre-flight check 6 pointed to a `docker run` in Step 5 that doesn't exist; it now points to
+    the troubleshooting snippet.
+  - U6's `openssl s_client -connect localhost[:port]` had no port when 443 is published directly,
+    so it now uses `localhost:<HTTPS_PORT>`. The `[:port]` convention is now stated as
+    `https://`-URLs only.
+  - Troubleshooting now covers recreating when the container is already gone (where to recover
+    the settings), and reading the build from the log volume with a throwaway container.
+- evals: new case for leftover `fms-*` volumes.
+
 ## v1.3 — 2026-09-24
 
 The Nginx follow-on decision from v1.2 has now been run on the verified container: after the

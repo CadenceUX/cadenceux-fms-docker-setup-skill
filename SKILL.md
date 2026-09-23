@@ -2,7 +2,7 @@
 compatibility: Claude Code
 metadata:
   "Built and maintained": "Darrin Southern from CadenceUX"
-  version: "1.3"
+  version: "1.4"
 name: cadenceux-fms-docker-setup
 description: |
   Installs, upgrades and configures Claris FileMaker Server in Docker on macOS with Docker
@@ -42,6 +42,27 @@ approach should generalise to Intel Macs and native Linux Docker hosts (the cont
 architecture-neutral once you match the right FMS package to `uname -m`), but only the
 arm64/macOS path has been run. Flag it to the developer if the host differs, rather than
 assuming identical behaviour.
+
+## Two conventions used in every command below
+
+**Container name — confirm it, don't assume `fms`.** Commands here use `fms`, the name Step 3
+creates. For any container that already exists, check first and substitute the real name:
+
+```bash
+docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+```
+
+Seen in practice: a working FMS container named `docker` but with hostname `fms` — so its prompt
+still read `root@fms:/#`. The in-container prompt shows the **hostname** (`root@<hostname>:/#`),
+not the container name, so take the prompt string for handoffs from
+`docker inspect <name> --format '{{.Config.Hostname}}'`. (FMS's own server name, as it appears in
+`Event.log`, is a third, separate name — don't confuse it with either.)
+
+**`[:port]` in URLs** means the host-side HTTPS port chosen in Step 3: nothing when host 443 is
+published directly, otherwise `:8443` or whatever was picked. It's for `https://` URLs only —
+`openssl s_client -connect` always needs an explicit port, so those commands use
+`localhost:<HTTPS_PORT>` (e.g. `localhost:443`). For an existing container, read it
+from the `Ports` column above rather than assuming.
 
 ## Is this FMS build current? (staleness check)
 
@@ -154,9 +175,27 @@ problem in five seconds up front. Run every check below and resolve or explicitl
    **This conflict can be transient** — confirmed in practice: port 443 was occupied on first
    setup, then free again roughly a day later with nothing else about the Mac's configuration
    changed. Don't treat an earlier remap as permanent; re-check before assuming `8443` is still
-   necessary, and if 443 is free, recreate the container publishing it directly (same
-   disaster-recovery `docker run` command as Step 5, just swap `-p 8443:443` for `-p 443:443`)
-   to drop the port number from every URL.
+   necessary, and if 443 is free, recreate the container publishing it directly — the
+   disaster-recovery `docker run` in the troubleshooting reference, with `<HTTPS_PORT>` set to
+   `443` — to drop the port number from every URL. Commit first (Step 5) and confirm with the
+   developer, since this removes the current container.
+
+7. **Check for existing FMS containers, volumes and images.** Anything left from an earlier
+   attempt changes what a "fresh" install actually does:
+   ```bash
+   docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}'
+   docker volume ls --filter name=fms-
+   docker images fmsdocker
+   ```
+   **Existing `fms-*` volumes are the dangerous one.** `docker volume create fms-data` on a name
+   that already exists is a silent no-op, so Step 2 appears to succeed and the new install lands
+   on the old licence, admin account and databases — the installer then offers "load previous
+   configuration" on what the developer thinks is a clean start. If any exist, stop and ask the
+   developer which they want: reuse them (a deliberate reinstall — see the troubleshooting
+   reference), use new volume names, or remove them — and only after a backup (U3's procedure)
+   and an explicit yes. Never remove a volume on your own judgement. An existing `fmsdocker:installed`
+   image may mean there's nothing to install at all — see "FileMaker Server disappeared" in the
+   troubleshooting reference.
 
 ## Decisions that need the developer's input, not an assumed default
 
@@ -211,6 +250,9 @@ docker volume create fms-wpeconf
 docker volume create fms-logs
 ```
 
+These succeed silently even when the volumes already exist — pre-flight check 7 is what catches
+that, not this step.
+
 Use named Docker volumes, not host bind-mounts under `/opt`. Docker Desktop's default macOS
 file-sharing only covers paths under `/Users` (and a few others) — a bind mount to `/opt/...`
 either fails silently or requires extra Docker Desktop configuration. Named volumes sidestep
@@ -226,9 +268,9 @@ docker run -d \
   --privileged \
   --restart unless-stopped \
   --stop-timeout 135 \
-  --memory 4096m \
-  --cpus 2 \
-  -p 8080:80 -p 8443:443 -p 2399:2399 -p 5003:5003 \
+  --memory <MEM> \
+  --cpus <CPUS> \
+  -p <HTTP_PORT>:80 -p <HTTPS_PORT>:443 -p 2399:2399 -p 5003:5003 \
   --volume fms-data:"/opt/FileMaker/FileMaker Server/Data" \
   --volume fms-cstore:"/opt/FileMaker/FileMaker Server/CStore" \
   --volume fms-wpeconf:"/opt/FileMaker/FileMaker Server/Web Publishing/publishing-engine/conf" \
@@ -236,11 +278,23 @@ docker run -d \
   fmsdocker:prep
 ```
 
+Fill the four placeholders from the pre-flight results and the developer's answers — never
+paste a fixed value regardless of the host:
+
+| Placeholder | Where it comes from | Seen on verified runs |
+|---|---|---|
+| `<MEM>` | Decisions → resource limits, from pre-flight check 2 | `4096m` (Docker Desktop had ~7.75GB) |
+| `<CPUS>` | Same | `2` |
+| `<HTTP_PORT>` | Pre-flight check 6: `80` if free, else e.g. `8080` | `8080` (macOS Apache held 80) |
+| `<HTTPS_PORT>` | Pre-flight check 6: `443` if free, else e.g. `8443` | `8443` on the first run, `443` later |
+
+State the values you chose and why before running it.
+
 Notes on the flags:
 - `--privileged` and a full init system (`/sbin/init`, systemd) are required for FMS's services
   to start correctly — Claris's Dockerfile already sets `CMD ["/sbin/init"]`.
 - Port mapping: if 80/443 are already taken on the host, remap the *host* side only
-  (`8080:80`, `8443:443` above) — keep `2399` (ODBC) and `5003` (FileMaker client protocol)
+  (e.g. `8080:80`, `8443:443`) — keep `2399` (ODBC) and `5003` (FileMaker client protocol)
   mapped 1:1 without remapping, since FileMaker Pro clients expect the standard port and can't
   easily be told to use a different one.
 - If `docker run` fails with "address already in use", that's the host port conflict from the
@@ -268,15 +322,23 @@ tab showing `root@fms:/#`". Otherwise a developer with several terminals open wi
 command into their usual macOS shell — see "`command not found` for a Linux command" in the
 troubleshooting reference for the symptom.
 
+First copy the package in (agent can do this — it's non-interactive):
+
 ```bash
-docker exec -it fms bash
-# then, inside the container:
-apt-get update && apt install /path/to/filemaker-server-*.deb
+docker cp "<path to the extracted FMS package>/filemaker-server-<build>-arm64.deb" fms:/tmp/
 ```
 
-(If the `.deb` isn't already reachable inside the container, `docker cp` it in first, or bind-mount
-the folder temporarily — see the disk-usage warning in the troubleshooting reference before
-leaving any bind mount attached long-term.)
+Use `docker cp`, not a bind mount of the installer folder. A bind mount left attached is what
+makes Admin Console report the Mac's own disk usage (see the disk-usage entry in the
+troubleshooting reference), and removing it later means recreating the container.
+
+Then hand this to the developer:
+
+```bash
+docker exec -it fms bash
+# then, inside the container (prompt root@<hostname>:/#):
+apt-get update && apt install /tmp/filemaker-server-<build>-arm64.deb
+```
 
 The wizard asks, in order: security check, license agreement, deployment type (primary
 machine), Admin Console username/password/4-digit PIN, filter databases by privilege, remove
@@ -285,17 +347,20 @@ security check and license, choose primary/standard deployment, decline HTTPS tu
 specifically needed, and let the developer choose their own Admin Console credentials — don't
 invent them.
 
-**On 26.0.2 it warns about an outdated bundled Nginx with known CVEs and asks whether to
-continue.** Say yes — this is expected on Ubuntu 24.04's apt-provided Nginx (1.24.0), and gets
-patched in Step 6. Whether 26.0.3+ still shows this warning on a fresh install hasn't been
-observed yet (see Step 6 for why it may not).
+**On 26.0.2 it warns about an outdated Nginx with known CVEs and asks whether to continue.**
+Say yes. The warning is about Ubuntu 24.04's apt-provided Nginx, going by its version number
+(1.24.0). Ubuntu backports security fixes into its 1.24.0 package without changing that upstream
+number, so a version check alone can't tell a patched package from an unpatched one. Claris's
+guidance changed between releases: 26.0.2 shipped `NginxUpdate.sh` to replace it (Step 6), and
+26.0.3 dropped that script so Ubuntu's own updates apply instead — which is why the upgrade
+section later recommends switching back to Ubuntu's package. Follow whatever the installed build
+expects. Whether 26.0.3+ still shows this warning on a fresh install hasn't been observed yet.
 
 **Two lines the installer prints at the end don't apply inside Docker — don't act on them:**
 
 - *"To configure FileMaker Server, open Admin Console at `https://172.17.0.2/admin-console`"* —
   that IP is the container's internal Docker bridge address and is **not reachable from the host
-  browser**. Use `https://localhost/admin-console` (or `https://localhost:8443/admin-console` if
-  80/443 were remapped in Step 3). Copying the printed URL, finding it dead, and concluding the
+  browser**. Use `https://localhost[:port]/admin-console`. Copying the printed URL, finding it dead, and concluding the
   container is broken is an easy mistake.
 - *"add current user to the group fmsadmin and then restart your system"* — bare-metal install
   boilerplate. There is no "current user" outside the container in this model and nothing needs
@@ -310,11 +375,16 @@ deletes the entire FMS software install — binaries, systemd units, everything 
 data volumes untouched, which is a deeply confusing partial-data-loss scenario to debug after the
 fact.
 
+Clear out the installer and apt's cache first — a commit captures everything in the writable
+layer, and on the 26.0.3 upgrade leaving the ~540MB `.deb` in `/tmp` bloated the image by that
+much:
+
 ```bash
+docker exec fms bash -c "rm -f /tmp/filemaker-server-*.deb && apt-get clean"
 docker commit --message "FMS installed - $(date '+%Y-%m-%d %H:%M')" fms fmsdocker:installed
 ```
 
-Re-run this commit after *every* further apt-level change to the container (the Nginx patch in
+Re-run this commit (after the same cleanup) after *every* further apt-level change to the container (the Nginx patch in
 Step 6, any OS package installs) — it's cheap, and it's the only thing standing between "restart
 the container" and "reinstall everything" if the container ever gets removed. Keep the
 disaster-recovery `docker run` command (identical to Step 3, but pointing at `fmsdocker:installed`
@@ -512,9 +582,9 @@ fixed number worth hardcoding as "wait N seconds." Poll with retries over roughl
 before concluding anything is actually broken:
 
 ```bash
-curl -sk -o /dev/null -w "%{http_code}\n" https://localhost:8443/fmi/webd                          # WebDirect
-curl -sk -o /dev/null -w "%{http_code}\n" https://localhost:8443/fmi/odata/v4/                      # OData
-curl -sk -o /dev/null -w "%{http_code}\n" https://localhost:8443/fmi/data/vLatest/productInfo       # Data API
+curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/fmi/webd                          # WebDirect
+curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/fmi/odata/v4/                      # OData
+curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/fmi/data/vLatest/productInfo       # Data API
 ```
 
 This cuts both ways — it also means a developer who manually started a component after finding
@@ -557,11 +627,17 @@ installed ones once the `.deb` is in the container (U4).
 ### U2 — Snapshot the container's software
 
 ```bash
-docker commit --message "FMS <old build> before upgrade - $(date '+%Y-%m-%d %H:%M')" fms fmsdocker:pre-upgrade-$(date '+%Y%m%d-%H%M')
-docker tag fmsdocker:pre-upgrade-<stamp> fmsdocker:installed
+STAMP=$(date '+%Y%m%d-%H%M')
+docker exec fms bash -c "rm -f /tmp/*.deb && apt-get clean"
+docker commit --message "FMS <old build> before upgrade - $STAMP" fms fmsdocker:pre-upgrade-$STAMP
+docker tag fmsdocker:pre-upgrade-$STAMP fmsdocker:installed
+echo "rollback tag: fmsdocker:pre-upgrade-$STAMP"
 ```
 
-The dated tag is the rollback point. It stays put when `:installed` moves on after the upgrade.
+Set `STAMP` once and reuse it. Building the timestamp separately for the commit and the tag
+breaks the tag whenever the minute rolls over between the two commands. Shell variables don't
+survive between separate agent tool calls, so run all four lines in one call and note the
+printed tag name for rollback. The dated tag is the rollback point. It stays put when `:installed` moves on after the upgrade.
 
 ### U3 — Back up the four data volumes (a commit doesn't include them)
 
@@ -624,7 +700,7 @@ and kept a copy of the old keystore as `CStore/keystore_26.0.2.backup`.
 docker exec fms bash -c "dpkg -l filemaker-server | tail -1; dpkg --audit; systemctl is-active fmshelper"
 curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/admin-console/signin
 curl -sk https://localhost[:port]/fmi/data/vLatest/productInfo
-echo | openssl s_client -connect localhost[:port] -servername localhost 2>/dev/null | openssl x509 -noout -issuer
+echo | openssl s_client -connect localhost:<HTTPS_PORT> -servername localhost 2>/dev/null | openssl x509 -noout -issuer
 docker exec fms bash -c "ls '/opt/FileMaker/FileMaker Server/Data/Databases/'"
 ```
 
@@ -715,7 +791,7 @@ WebDirect, OttoFMS and the mkcert certificate all came back unchanged. Finish wi
 Not yet exercised — treat as expected-to-work, and say so if it's ever needed. Software only
 (data untouched by the upgrade): recreate the container from the dated tag with the
 disaster-recovery `docker run` in the troubleshooting reference, swapping `fmsdocker:installed`
-for `fmsdocker:pre-upgrade-<stamp>`. If the data was changed too, restore each volume from U3
+for the `fmsdocker:pre-upgrade-<STAMP>` tag U2 printed. If the data was changed too, restore each volume from U3
 into an emptied volume (`docker run --rm -v <vol>:/dst -v "$B":/src fmsdocker:prep sh -c "rm -rf
 /dst/* /dst/.[!.]* ; tar -xzf /src/<vol>.tgz -C /dst"`) with the container stopped. Both
 replace things — confirm with the developer before running either.
@@ -727,8 +803,8 @@ installer prints (see Step 4).
 
 ```bash
 docker exec fms systemctl is-active fmshelper          # expect: active
-curl -sk -o /dev/null -w "%{http_code}\n" https://localhost:8443/admin-console/   # expect: 200
-echo | openssl s_client -connect localhost:8443 -servername localhost 2>/dev/null | openssl x509 -noout -issuer   # expect: your mkcert CA, not FMS's self-signed default
+curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/admin-console/   # expect: 200
+echo | openssl s_client -connect localhost:<HTTPS_PORT> -servername localhost 2>/dev/null | openssl x509 -noout -issuer   # expect: your mkcert CA, not FMS's self-signed default
 ```
 
 ## If something's already gone wrong
