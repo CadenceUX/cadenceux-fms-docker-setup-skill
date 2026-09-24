@@ -10,7 +10,7 @@
     },
     {
       "prompt": "I ran docker rm on my FMS container and now fmsadmin says command not found, but the databases still show up in the volume.",
-      "expected": "Triggers the skill via the 'FMS software disappearing after a container was recreated' symptom; recognizes the container-vs-image trap and walks through reinstalling on top of the existing data via troubleshooting.md, then recommends committing an image going forward."
+      "expected": "Triggers the skill via the 'FMS software disappearing after a container was recreated' symptom. Rules out the wrong shell, then checks docker images fmsdocker for a committed image and recreates from it (settings recorded, confirmation first). Only if no image exists: backs up the four volumes, reinstalls the same build the data last ran (from Event.log) with docker exec -it and 'load previous configuration', and cleans up before committing."
     },
     {
       "prompt": "Claris released a FileMaker Server update overnight. My FMS runs in Docker — can you update it?",

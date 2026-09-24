@@ -126,14 +126,24 @@ docker run -d \
 usage percentage instead of the container/FMS volumes' real usage, since the bind mount passes
 through the host filesystem's own stats.
 
-**Fix:** don't leave that bind mount attached long-term. Once the installer step is done,
-either use `docker cp` for any further one-off file transfers, or recreate the container without
-the `/install` mount (same `docker run` command as above, just omit that `--volume` line).
+**Fix:** don't leave that bind mount attached long-term — use `docker cp` for one-off file
+transfers instead. Removing a mount means recreating the container:
+
+1. Find the bind mount: `docker inspect <container> --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'`
+   — the `bind` line is the one to drop. If there's **no** `bind` line, this isn't the cause; say
+   so rather than recreating anything, and check `docker system df` and Docker Desktop's disk
+   limit instead.
+2. Commit first (SKILL.md Step 5, including the `.deb` clean-up) so the software is safe, and
+   confirm with the developer — this removes the container.
+3. Record its settings with the `docker inspect` commands under "FileMaker Server disappeared",
+   then `docker stop -t 135 <container> && docker rm <container>`.
+4. Recreate with the disaster-recovery `docker run` from that section — it has only the four named
+   volumes, so the bind mount is simply not carried over.
 
 **Verify the real number** rather than trusting Admin Console's display:
 
 ```bash
-docker exec <container> df -h "/opt/FileMaker/FileMaker Server/Data" / /install 2>&1
+docker exec <container> df -h "/opt/FileMaker/FileMaker Server/Data" / "<bind-mount destination>" 2>&1
 ```
 
 Whichever mount shows the inflated percentage is the bind mount to remove.
@@ -156,7 +166,8 @@ docker exec -it <container> bash
 "/opt/FileMaker/FileMaker Server/Database Server/bin/fmsadmin" certificate create localhost --keyfilepass <passphrase>
 # creates CStore/serverRequest.pem (CSR) and CStore/serverKey.pem
 
-# 2. Pull the CSR out, sign it with your own CA (mkcert or otherwise), injecting SAN entries:
+# 2. Pull the CSR out, sign it with your own CA (mkcert or otherwise), injecting SAN entries.
+#    mkcert's CA files only exist once `mkcert -install` has run (developer, Mac terminal):
 docker cp <container>:"/opt/FileMaker/FileMaker Server/CStore/serverRequest.pem" ./serverRequest.pem
 CAROOT=$(mkcert -CAROOT)
 printf 'subjectAltName=DNS:localhost,DNS:<other-names>,IP:127.0.0.1,IP:::1\n' > san.ext

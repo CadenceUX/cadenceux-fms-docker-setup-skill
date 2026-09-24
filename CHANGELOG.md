@@ -1,5 +1,68 @@
 # Changelog
 
+## v1.5 — 2026-09-24
+
+Works through the eval findings left over from v1.4. It also runs the rollback for real, in an
+isolated test container, so it's no longer marked "not yet exercised". Every new command was
+run before release (details per item).
+
+- **Rollback — verified and rewritten as numbered steps.** A test container (`--network none`,
+  so it couldn't clash with the live server's ports or licence) was recreated from the dated
+  `pre-upgrade` tag onto volumes restored from the U3 tars. It came back as 26.0.2.219 in about
+  20 seconds, with `fmshelper` active, the database opened and the Data API OK; it was then
+  removed. The restore was run twice, the second time over a non-empty volume, to prove the
+  "empty first" part. The steps now:
+  1. commit the failed state first
+  2. record the settings, then stop and `rm` explicitly
+  3. restore the data only when it's needed
+  4. recreate from the dated tag
+  5. verify, then point `:installed` back
+- **New trap — checking a restore with `find -type f` undercounts.** The backups contain 13
+  OttoFMS symlinks and a named pipe (`.passphrase`), and `-type f` skips both, which looked like
+  missing files. Use `find ! -type d`.
+- **Step 8 (mkcert) — rewritten.**
+  - Homebrew only if it's already installed, otherwise the direct download. The old text said
+    "don't default to Homebrew" and then led with `brew install mkcert`.
+  - Every command is labelled developer-Mac, developer-container-tab or agent.
+  - **Ordering bug fixed:** `mkcert -install`, which creates the CA, now runs first. Signing
+    needs the CA files, so on a Mac that had never run mkcert, the old order failed at the
+    signing step. There's also a check that the CA files exist.
+  - The broken "see the note below" pointer now names the `/tmp` entry in troubleshooting.
+  - The signing commands were tested with a throwaway CA; all four SAN entries were present.
+- **Upgrades — skipping releases and bigger jumps.** Read the release notes for every release in
+  between. Apply version-dependent steps according to which releases the jump crosses (the Nginx
+  follow-on heading now says "from 26.0.2 or earlier to 26.0.3+"). Check Claris's supported
+  upgrade paths. A major version, or a Dockerfile whose `FROM` changes, is flagged as an untested
+  rebuild, not an in-place `apt` upgrade.
+- **U1 — old package no longer on disk:** check the new Dockerfile's `FROM` line and package list
+  against the running container. The package check goes through `xargs` because zsh doesn't
+  word-split `$var`: the first attempt passed all 24 packages as one bogus name. Run verbatim
+  from the skill in zsh against the live container, all 24 were present, and a fake package
+  name was reported as missing.
+- **U3 — backup location agreed with the developer** (absolute path under `/Users`) instead of
+  `$PWD`, with a fallback image if `fmsdocker:prep` is gone.
+- **Upgrades — agree the downtime first:** U3 and U5 each disconnect clients.
+- **Storage decision:** named volumes are recommended. A host-folder bind mount is flagged as
+  untested and likely to trigger the disk-usage false alarm; U3's tars are the way to get
+  Finder-visible copies.
+- **Troubleshooting — disk-usage fix:** now finds the bind mount with `docker inspect`, and says
+  what to do when there isn't one. It commits and confirms before recreating, and no longer
+  refers to an `/install` line the snippet doesn't have. The inspect command was checked against
+  the live container.
+- **Troubleshooting — certificate fix:** notes that mkcert's CA exists only after
+  `mkcert -install`.
+- **Verified-environment table:** new rollback row.
+- **From an independent pre-release review:**
+  - The rollback restore used U3's `$B`, which is empty in a later shell (`-v "":/src` fails).
+    It now takes the backup folder path, and U3 prints that path and says to run its block in
+    one call.
+  - U2 said "four lines" but has five.
+  - Step 4 said the upgrade section "recommends" Ubuntu's Nginx; that section deliberately
+    presents two options.
+  - The README still called Ubuntu's Nginx "CVE-affected".
+  - The disk-usage verify command still hardcoded `/install`.
+  - The docker-rm eval's expected answer predated the recreate-from-image-first fix.
+
 ## v1.4 — 2026-09-24
 
 Fixes from an eval run of v1.3: four eval prompts, each run once with the skill and once

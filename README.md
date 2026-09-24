@@ -4,7 +4,7 @@ A Claude Code skill for installing and configuring Claris FileMaker Server insid
 container. Verified end-to-end on macOS (Apple Silicon) with Docker Desktop, using Claris's
 official arm64 Ubuntu 24.04 build, and hardened through three rounds of real corrections since
 first written, a second independent install run (v1.1), and a real in-place upgrade from
-26.0.2 to 26.0.3 (v1.2), including the move to Ubuntu's own Nginx that 26.0.3 expects (v1.3), then tightened from an eval run of the skill against a no-skill baseline (v1.4).
+26.0.2 to 26.0.3 (v1.2), including the move to Ubuntu's own Nginx that 26.0.3 expects (v1.3), then tightened from an eval run of the skill against a no-skill baseline (v1.4), with rollback verified in an isolated test container (v1.5).
 
 Built and maintained by [Darrin Southern](https://www.linkedin.com/in/darrin-southern/) from [CadenceUX](https://cadenceux.com.au).
 
@@ -22,14 +22,16 @@ When this skill is active, Claude will:
   container's writable layer, not the image or any volume, so an accidental `docker rm`
   silently wipes the software while leaving data intact. The skill commits an image at the
   right points so that mistake is recoverable rather than a full reinstall
-- Patch Ubuntu's CVE-affected bundled Nginx on 26.0.2 and earlier, correctly, in a container
-  with no working `sudo` — and know when not to, since 26.0.3 changed Claris's approach
+- Handle the installer's Nginx version warning — the nginx.org patch on 26.0.2 and earlier, done
+  correctly in a container with no working `sudo` — and know when not to, since 26.0.3 changed
+  Claris's approach
 - Promote the sample database when it doesn't auto-appear (a common silent gap on reinstalls)
 - Set up a locally-trusted HTTPS certificate via `mkcert`, including a documented workaround
   for a real bug in `fmsadmin certificate import`'s external-key path
 - Check whether the container's FMS build is current against Claris's own updater feed
 - Upgrade FMS in place to a new release — snapshot the container, back up the data volumes,
   dry-run the package, run the upgrade, verify, and commit — so a bad upgrade can be rolled back
+  (rollback verified)
 - Enable WebDirect, OData, and the Data API — all disabled by default even after a clean
   install — and correctly interpret their genuinely variable startup delay after a restart,
   rather than concluding a working config has failed

@@ -2,7 +2,7 @@
 compatibility: Claude Code
 metadata:
   "Built and maintained": "Darrin Southern from CadenceUX"
-  version: "1.4"
+  version: "1.5"
 name: cadenceux-fms-docker-setup
 description: |
   Installs, upgrades and configures Claris FileMaker Server in Docker on macOS with Docker
@@ -34,6 +34,7 @@ cover the macOS-specific failure modes below.
 | 26.0.2.219 | Fresh install, Steps 1–9 | 2 (second on macOS 15, 16GB RAM, ~7.75GB to Docker Desktop — no command changes needed) |
 | 26.0.2.219 → 26.0.3.309 | In-place upgrade (see *Upgrading FileMaker Server in place*) | 1 (2026-09-24) |
 | 26.0.3.309 | Switch from frozen nginx.org 1.30.4 to Ubuntu's `nginx` 1.24.0 after the upgrade | 1 (2026-09-24) |
+| 26.0.3.309 → 26.0.2.219 | Rollback: dated snapshot + volumes restored from U3 tars (isolated test container, `--network none`) | 1 (2026-09-24) |
 
 **A fresh install of 26.0.3 or later has not been run yet.** Steps 1–9 were written against
 26.0.2.219; where 26.0.3 is known to behave differently (Step 6, Nginx) that's called out
@@ -206,11 +207,13 @@ picking silently, even though each has a reasonable default worth suggesting:
   unless the developer specifically wants to test multi-server/failover features — state that
   assumption and let them correct it, rather than asking as a blocking question every time
   (this one has a clear, low-risk default).
-- **Data storage: named Docker volume vs. a host-visible folder** (Step 2) — genuinely ask.
-  Named volumes are simpler and avoid macOS file-sharing permission issues; a host folder under
-  `~/Desktop/...` or similar gives Finder-visible files for easy backup/browsing, at the cost of
-  a small amount of extra setup. Don't default this one silently — it affects how the developer
-  interacts with their own data going forward.
+- **Data storage: named Docker volumes vs. a host-visible folder** (Step 2) — ask, and
+  recommend named volumes. They're the only option this runbook has run. A host folder under
+  `~/Desktop/...` gives Finder-visible files, but it's a bind mount, and a bind mount is exactly
+  what caused the Admin Console disk-usage false alarm (see the troubleshooting reference) — expect
+  the same there. That path is untested here: no commands for it, and ownership/permissions for
+  FMS's `fmserver` user haven't been checked. If what the developer actually wants is
+  Finder-visible copies of the data, U3's backup tars give them that without a bind mount.
 - **Container resource limits** (`--memory`, `--cpus` in Step 3) — compute a suggested value
   from the actual host resources checked in step 2 above, state the reasoning ("Docker Desktop
   has X allocated, suggesting Y"), and let the developer adjust rather than hardcoding a fixed
@@ -256,8 +259,8 @@ that, not this step.
 Use named Docker volumes, not host bind-mounts under `/opt`. Docker Desktop's default macOS
 file-sharing only covers paths under `/Users` (and a few others) — a bind mount to `/opt/...`
 either fails silently or requires extra Docker Desktop configuration. Named volumes sidestep
-this entirely and are the simpler default. (A host folder under `~/Desktop/...` is a legitimate
-alternative if the developer wants Finder-visible files — offer it, don't assume it.)
+this entirely and are the simpler default. For the host-folder alternative and why it's not the
+recommended one, see *Decisions* above.
 
 ## Step 3 — Run the container
 
@@ -353,8 +356,8 @@ Say yes. The warning is about Ubuntu 24.04's apt-provided Nginx, going by its ve
 number, so a version check alone can't tell a patched package from an unpatched one. Claris's
 guidance changed between releases: 26.0.2 shipped `NginxUpdate.sh` to replace it (Step 6), and
 26.0.3 dropped that script so Ubuntu's own updates apply instead — which is why the upgrade
-section later recommends switching back to Ubuntu's package. Follow whatever the installed build
-expects. Whether 26.0.3+ still shows this warning on a fresh install hasn't been observed yet.
+section later lays out switching back to Ubuntu's package as one of two options. Follow
+whatever the installed build expects. Whether 26.0.3+ still shows this warning on a fresh install hasn't been observed yet.
 
 **Two lines the installer prints at the end don't apply inside Docker — don't act on them:**
 
@@ -488,61 +491,68 @@ tested) and importing with `fmsadmin certificate import <cert> --keyfile <key> -
 20408), even when the key/password pair is independently verified correct with OpenSSL. This
 looks like a genuine bug or unsupported path specific to `--keyfile` external-key import.
 
-**No Homebrew?** Don't default to installing Homebrew — a system-wide package manager is a much
-bigger ask than one binary. Offer the direct download first. It comes from the mkcert
-maintainer's own stable redirect (documented in mkcert's release notes) and needs no sudo and no
-package manager:
+**Getting mkcert (once per Mac).** Check first: `command -v mkcert`. If it's missing:
 
-```bash
-curl -fsSL "https://dl.filippo.io/mkcert/latest?for=darwin/arm64" -o mkcert
-chmod +x mkcert
-file mkcert          # confirm a real Mach-O executable of plausible size before running it
-./mkcert -version
-```
+- **`brew` already installed** (`command -v brew`) → `brew install mkcert`.
+- **No Homebrew** → don't install Homebrew just for this; a system-wide package manager is a much
+  bigger ask than one binary. Use the direct download instead. It comes from the mkcert
+  maintainer's own stable redirect (documented in mkcert's release notes) and needs no sudo and
+  no package manager:
 
-Swap `darwin/arm64` for `darwin/amd64`, `linux/amd64` etc. to match the host. `/usr/local/bin` is
-root-owned on stock macOS, so to avoid sudo keep the binary in `~/bin/` (or any directory already
-on `PATH`) and call it by full path — `~/bin/mkcert -install`, `~/bin/mkcert -CAROOT` — unless
-that directory is actually on `PATH`. The `mkcert` calls in the steps below assume it resolves;
-substitute the full path if not.
+  ```bash
+  mkdir -p ~/bin && cd ~/bin
+  curl -fsSL "https://dl.filippo.io/mkcert/latest?for=darwin/arm64" -o mkcert
+  chmod +x mkcert
+  file mkcert          # confirm a real Mach-O executable of plausible size before running it
+  ./mkcert -version
+  ```
+
+  Swap `darwin/arm64` for `darwin/amd64`, `linux/amd64` etc. to match the host.
+  `/usr/local/bin` is root-owned on stock macOS, so the binary stays in `~/bin/`. Call it by full
+  path (`~/bin/mkcert`) unless `~/bin` is actually on `PATH`. The commands below write `mkcert`;
+  substitute the full path where needed.
 
 **The working path:** let FMS generate its own key, and only bring your own signed certificate.
+Three places run commands here — label every handoff with which one:
+
+- **Developer's Mac terminal** (their own macOS shell): `mkcert -install` — it changes the macOS
+  trust store, so the developer runs it, not the agent, even though it's low-risk.
+- **Developer's container tab** (prompt `root@<hostname>:/#`, opened with `docker exec -it fms
+  bash`): the two `fmsadmin` commands — both ask for the Admin Console username and password.
+- **Agent** (non-interactive, on the Mac): everything else.
 
 ```bash
-# 1. Install mkcert (once) — or use the direct download above if `brew` isn't installed
-brew install mkcert
+# 1. DEVELOPER, Mac terminal — creates mkcert's local CA if it doesn't exist yet, and trusts it.
+#    This must come first: step 3 signs with the CA files this creates.
+mkcert -install
 
-# 2. Inside the container, have FMS generate its own CSR + key (needs the Admin Console
-#    username/password interactively — run from the developer's own terminal):
-docker exec -it fms bash
+# 2. DEVELOPER, container tab (root@<hostname>:/#) — FMS generates its own CSR + key:
 "/opt/FileMaker/FileMaker Server/Database Server/bin/fmsadmin" certificate create localhost --keyfilepass <a passphrase>
 # answer y, then the Admin Console username/password when prompted
-# this creates serverRequest.pem and serverKey.pem in CStore/ — leave serverKey.pem alone
+# creates serverRequest.pem and serverKey.pem in CStore/ — leave serverKey.pem alone
 
-# 3. Pull the CSR out and sign it with mkcert's CA, injecting your own SAN list
+# 3. AGENT, Mac — pull the CSR out and sign it with mkcert's CA, injecting a SAN list
 #    (Chrome/Safari require SAN entries — a CN-only cert is rejected regardless of match):
 docker cp fms:"/opt/FileMaker/FileMaker Server/CStore/serverRequest.pem" ./serverRequest.pem
 CAROOT=$(mkcert -CAROOT)
-cat > san.ext <<'EOF'
-subjectAltName=DNS:localhost,DNS:fms,IP:127.0.0.1,IP:::1
-EOF
+ls "$CAROOT/rootCA.pem" "$CAROOT/rootCA-key.pem"   # both must exist — if not, step 1 hasn't run
+printf 'subjectAltName=DNS:localhost,DNS:fms,IP:127.0.0.1,IP:::1\n' > san.ext
 openssl x509 -req -in serverRequest.pem \
   -CA "$CAROOT/rootCA.pem" -CAkey "$CAROOT/rootCA-key.pem" -CAcreateserial \
   -out serverSigned.pem -days 730 -extfile san.ext
 
-# 4. Copy the signed cert into a persistent volume path (NOT /tmp — see the note below) and import
+# 4. AGENT, Mac — copy the signed cert into the CStore volume, not /tmp (an unclean restart
+#    wipes /tmp — see "/tmp contents vanished" in the troubleshooting reference):
 docker cp serverSigned.pem "fms:/opt/FileMaker/FileMaker Server/CStore/serverSigned.pem"
 docker exec fms chown fmserver:fmsadmin "/opt/FileMaker/FileMaker Server/CStore/serverSigned.pem"
-# then, back in the interactive shell from step 2:
+
+# 5. DEVELOPER, container tab — import it. No --keyfile: FMS already has the matching key from step 2.
 "/opt/FileMaker/FileMaker Server/Database Server/bin/fmsadmin" certificate import "/opt/FileMaker/FileMaker Server/CStore/serverSigned.pem" --keyfilepass <same passphrase>
-# no --keyfile flag this time — FMS already has its own matching key from step 2
 ```
 
-Restart the container when prompted, then have the **developer** (not the agent) run
-`mkcert -install` in their own terminal — this modifies the macOS system trust store, which is
-outside what an agent should do on the user's behalf even though the action itself is low-risk.
-Same rule for any `/etc/hosts` edits for a local DNS alias (see the reference file for a subtle
-trailing-newline trap there).
+Restart the container when prompted (`docker restart fms`). Any `/etc/hosts` edit for a local
+DNS alias is also the developer's to make, in their Mac terminal (see the reference file for a
+subtle trailing-newline trap there).
 
 To add more SAN names later (e.g. a custom local hostname), re-sign the *same* CSR with an
 expanded SAN list and re-import with the same passphrase — no need to redo `certificate create`.
@@ -609,6 +619,11 @@ Docker job is doing it so it can be rolled back, and not losing it afterwards.
 **Don't use Admin Console's own update prompt for this.** Stick to the steps below so the
 snapshot and volume backup exist before anything changes.
 
+**Agree the downtime first.** U3 stops the container, and U5 restarts FMS — connected FileMaker
+clients get disconnected both times. How long depends on data size (the verified run had tiny
+volumes, so the U3 stop was brief; the U5 outage wasn't timed). Ask the developer when that's
+acceptable rather than starting straight away.
+
 ### U1 — Get the new package and compare it with the old one
 
 The developer supplies the `fms_<version>_Ubuntu24_arm64.zip` (licence-linked download — see the
@@ -624,6 +639,38 @@ ls fms_<old> fms_<new>                                               # helper sc
 `NginxUpdate.sh` was dropped (see Step 6). Also compare the package's dependencies against the
 installed ones once the `.deb` is in the container (U4).
 
+**Old package no longer on disk?** Compare the new Dockerfile against the running container
+instead. Its `FROM` line must match the container's OS (`grep ^FROM fms_<new>/Docker/Dockerfile`
+vs `docker exec fms grep ^VERSION_ID /etc/os-release`), and every package in its
+`apt-get install` list should already be installed:
+
+```bash
+awk '/apt-get install --no-install-recommends -y/{f=1;next} f{line=$0; gsub(/[\\&]/,"",line); n=split(line,a," "); for(i=1;i<=n;i++) print a[i]; if($0 ~ /&&/) exit}' fms_<new>/Docker/Dockerfile \
+| docker exec -i fms xargs dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 2>&1 | grep -v '^ii '
+```
+
+No output means everything is installed; any line printed is a missing package. (Verified
+2026-09-24 against the 26.0.3.309 Dockerfile: all 24 present, and a deliberately fake name was
+reported. The list goes through `xargs` because zsh — macOS's default shell — doesn't split an
+unquoted `$var` into words, which silently turns a package list into one bogus name.) Anything
+missing means the prep image is out of date for this release — stop and plan that before going
+further.
+
+**Skipping a release, or a bigger jump.** Only a single step (26.0.2 → 26.0.3) has been run.
+For a jump across several releases:
+
+- Read the release notes for *every* release in between, not just the newest — changes like
+  26.0.3's Nginx one land in the release that introduced them.
+- Apply version-dependent steps by what the jump *crosses*. Going from 26.0.2 or earlier to
+  anything 26.0.3 or later means Step 6 no longer applies and the Nginx follow-on decision below
+  does.
+- Check Claris's installation guide for the new release for any supported-upgrade-path limits
+  before assuming a direct jump is allowed. This runbook doesn't know them.
+- **A new major version, or a Dockerfile whose `FROM` changes**, may not upgrade in place with
+  `apt` at all. That would mean building a new prep image and installing into a new container
+  on the same (backed-up) volumes — a path that hasn't been run. Tell the developer it's
+  untested and plan it with them rather than improvising.
+
 ### U2 — Snapshot the container's software
 
 ```bash
@@ -636,24 +683,33 @@ echo "rollback tag: fmsdocker:pre-upgrade-$STAMP"
 
 Set `STAMP` once and reuse it. Building the timestamp separately for the commit and the tag
 breaks the tag whenever the minute rolls over between the two commands. Shell variables don't
-survive between separate agent tool calls, so run all four lines in one call and note the
+survive between separate agent tool calls, so run all of these lines in one call and note the
 printed tag name for rollback. The dated tag is the rollback point. It stays put when `:installed` moves on after the upgrade.
 
 ### U3 — Back up the four data volumes (a commit doesn't include them)
 
 Databases, licence, certificates and admin account live in the volumes, not the image. Stop the
 container so no database is open mid-copy, archive each volume with a throwaway container from
-the already-present `fmsdocker:prep` image (no extra image pull), then start it again:
+the already-present `fmsdocker:prep` image (no extra image pull), then start it again.
+
+Choose the backup folder with the developer — somewhere on the Mac they'll find again, and under
+`/Users` so Docker Desktop can mount it (the verified run used a `backups/` folder next to the
+installer packages). Use an absolute path. If `fmsdocker:prep` is gone (`docker images
+fmsdocker`), any image with `tar` works for the throwaway container, e.g. `fmsdocker:installed`.
 
 ```bash
-B="$PWD/backups/pre-<new version>-$(date '+%Y%m%d-%H%M')"; mkdir -p "$B"
+B="<absolute backup folder>/pre-<new version>-$(date '+%Y%m%d-%H%M')"; mkdir -p "$B"
 docker stop -t 120 fms
 for v in fms-cstore fms-data fms-logs fms-wpeconf; do
   docker run --rm -v $v:/src:ro -v "$B":/dst fmsdocker:prep tar -czf /dst/$v.tgz -C /src .
 done
 docker start fms
 for f in "$B"/*.tgz; do echo "$(basename $f): $(tar -tzf $f | wc -l) entries"; done
+echo "backup folder: $B"
 ```
+
+Run the whole block in one call (it relies on `$B` throughout), and note the printed backup
+folder — a rollback needs that exact path later.
 
 Check `fms-data.tgz` actually lists the `.fmp12` files before moving on
 (`tar -tzf "$B/fms-data.tgz" | grep -i fmp12`). Confirm the Admin Console answers again after
@@ -724,7 +780,7 @@ docker tag fmsdocker:<new build> fmsdocker:installed
 
 The disaster-recovery `docker run` in the troubleshooting reference now restores the new build.
 
-### One follow-on decision after 26.0.2 → 26.0.3 (Nginx)
+### One follow-on decision when upgrading from 26.0.2 or earlier to 26.0.3+ (Nginx)
 
 A container patched under 26.0.2 (Step 6) keeps the newer nginx.org build after the upgrade
 (1.30.4 on the verified run), but 26.0.3 removed the nginx.org repository, so that build now
@@ -788,13 +844,43 @@ WebDirect, OttoFMS and the mkcert certificate all came back unchanged. Finish wi
 
 ### Rolling back
 
-Not yet exercised — treat as expected-to-work, and say so if it's ever needed. Software only
-(data untouched by the upgrade): recreate the container from the dated tag with the
-disaster-recovery `docker run` in the troubleshooting reference, swapping `fmsdocker:installed`
-for the `fmsdocker:pre-upgrade-<STAMP>` tag U2 printed. If the data was changed too, restore each volume from U3
-into an emptied volume (`docker run --rm -v <vol>:/dst -v "$B":/src fmsdocker:prep sh -c "rm -rf
-/dst/* /dst/.[!.]* ; tar -xzf /src/<vol>.tgz -C /dst"`) with the container stopped. Both
-replace things — confirm with the developer before running either.
+Verified 2026-09-24 in an isolated test container (26.0.3.309 → 26.0.2.219): recreated from the
+dated `pre-upgrade` tag onto volumes restored from the U3 tars, it came back as 26.0.2.219 in
+about 20 seconds, with `fmshelper` active, the database opened and the Data API answering. The
+test ran with `--network none` beside the live server, so the steps below were proven on copies;
+a rollback of the real container hasn't been needed yet.
+
+**Rolling back replaces the running container, and possibly the data — confirm with the developer
+before starting, and say which of the two cases below applies.**
+
+1. **Keep the failed state first.** Commit the current container before removing it, so what
+   went wrong can still be looked at later:
+   ```bash
+   docker exec fms bash -c "rm -f /tmp/*.deb && apt-get clean"
+   docker commit --message "failed upgrade state - $(date '+%Y-%m-%d %H:%M')" fms fmsdocker:failed-$(date '+%Y%m%d-%H%M')
+   ```
+2. **Record the settings** with the `docker inspect` commands in the troubleshooting reference
+   (ports, memory, CPUs, mounts), then stop and remove the container:
+   ```bash
+   docker stop -t 135 fms && docker rm fms
+   ```
+3. **Data too? Restore the volumes** from U3 — only if the upgrade changed or damaged data, not by
+   default: the upgrade itself preserves the volumes. The container must be stopped (it is, after
+   step 2). For each of the four volumes:
+   ```bash
+   docker run --rm -v <vol>:/dst -v "<U3 backup folder>":/src fmsdocker:prep sh -c "rm -rf /dst/* /dst/.[!.]* ; tar -xzf /src/<vol>.tgz -C /dst"
+   ```
+   `<U3 backup folder>` is the absolute path U3 printed — the `$B` variable from U3 won't exist in
+   a later shell. This empties the volume before extracting, so it also works over a volume that still holds
+   the newer data. Check it with `find ! -type d`, not `find -type f`: the backups include
+   symlinks (OttoFMS's file-manager links in `fms-data`) and a named pipe (`.passphrase` in
+   `fms-cstore`), which `-type f` skips — that looked like missing files on the verified run
+   until a proper comparison showed every entry restored.
+4. **Recreate** with the disaster-recovery `docker run` in the troubleshooting reference, using the
+   recorded settings and the `fmsdocker:pre-upgrade-<STAMP>` tag U2 printed in place of
+   `fmsdocker:installed`.
+5. **Verify** with U6, expecting the *old* build, then point `:installed` back at it:
+   `docker tag fmsdocker:pre-upgrade-<STAMP> fmsdocker:installed`.
 
 ## Verifying the whole install
 
