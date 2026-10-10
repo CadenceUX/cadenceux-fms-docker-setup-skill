@@ -45,16 +45,22 @@ the `fmp-dev-*` and `claris-filemaker-pro` skills for that side of the platform.
 For installing OttoFMS on top of this once the base server is working, see the companion skill
 `cadenceux-ottofms-docker-setup` (not yet published to a separate repo).
 
-## Installation
+## Install
 
-**Easiest — double-click (macOS):** download the `.skill` file from the
-[Releases page](../../releases) and double-click it. Claude Desktop registers the `.skill`
-extension and opens its install flow directly. (The `.skill` file is the release zip with a
-different extension. Not yet confirmed on Windows.)
+**Claude Code** (from the `cadenceux` plugin marketplace):
 
-**Fallback — upload the zip:** in Claude.ai, go to **Customize → Skills** and upload the
-release `.zip`. This is the path for the web app and any platform where the double-click
-association isn't available.
+```bash
+claude plugin marketplace add https://github.com/CadenceUX/cadenceux-skills.git
+claude plugin install cadenceux-fms-docker-setup@cadenceux
+```
+
+**claude.ai and Cowork:** Customize → Plugins → Add marketplace from GitHub →
+`CadenceUX/cadenceux-skills`, then install **cadenceux-fms-docker-setup**.
+
+**Claude desktop app (macOS):** download `cadenceux-fms-docker-setup-v1.6.0.skill` from the
+[latest release](https://github.com/CadenceUX/cadenceux-fms-docker-setup-skill/releases) and double-click it.
+
+**Claude.ai in a browser, as a single skill:** Customize → Skills → upload the release `.zip`.
 
 ## Why this exists
 

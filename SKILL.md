@@ -1,22 +1,25 @@
 ---
-compatibility: Claude Code
-metadata:
-  "Built and maintained": "Darrin Southern from CadenceUX"
-  version: "1.5"
 name: cadenceux-fms-docker-setup
-description: |
+description: >-
   Installs, upgrades and configures Claris FileMaker Server in Docker on macOS with Docker
-  Desktop, using Claris's official arm64 Ubuntu 24.04 build. Use when asked to install, set
-  up, upgrade, update, run or troubleshoot FMS on Docker ("FMS on Docker", "Dockerize
-  FileMaker Server", "update FMS in the container", "is my FMS current?"). Also trigger when
-  FMS installer files (filemaker-server*.deb, or an fms_*.zip with a Docker folder) sit in the
-  working directory, or on symptoms it resolves: a wrong Admin Console disk-usage percentage,
-  "Cannot decrypt the private key file" on certificate import, a missing sample database,
-  Nginx CVE warnings, or FMS vanishing after a container was recreated. Covers building from
-  Claris's Dockerfile (their install script can't run on macOS), the install wizard, in-place
-  upgrades with snapshot and volume backup, a trusted mkcert cert, and the
-  container-vs-image data-loss trap. Not for FileMaker Pro schema/script/layout work. For
-  OttoFMS on top, see cadenceux-ottofms-docker-setup.
+  Desktop, using Claris's official arm64 Ubuntu 24.04 build: building from Claris's Dockerfile
+  (their install script can't run on macOS), the install wizard, persistent volumes, a trusted
+  mkcert certificate, WebDirect, Data API and OData, in-place upgrades with a snapshot and
+  volume backup, and rollback. Use when asked to install, set up, upgrade, update, run or
+  troubleshoot FMS on Docker ("FMS on Docker", "Dockerize FileMaker Server", "is my FMS
+  current?"), when FMS installer files (filemaker-server*.deb, or an fms_*.zip with a Docker
+  folder) are in the working directory, or on symptoms it resolves: a wrong Admin Console
+  disk-usage figure, "Cannot decrypt the private key file" on certificate import, a missing
+  sample database, Nginx CVE warnings, or FMS vanishing after a container was recreated. Not
+  for FileMaker Pro schema, script or layout work; for OttoFMS on top, see cadenceux-ottofms-
+  docker-setup.
+license: CC-BY-4.0
+compatibility: >-
+  Claude Code on macOS (Apple Silicon) with Docker Desktop. Needs the developer's licence-
+  linked FileMaker Server Linux download.
+metadata:
+  author: Darrin Southern, CadenceUX
+  version: "1.6.0"
 ---
 
 # FileMaker Server on Docker — Setup
@@ -90,7 +93,7 @@ Linux, Nginx, Ubuntu and install/upgrade notes, since those are what touch this 
 If the feed is newer than the container, say so:
 
 > ⚠️ **Newer FileMaker Server available** — the container runs [installed]; Claris's latest
-> Linux release is [latest]. See *Upgrading FileMaker Server in place* below. Separately, this
+> Linux release is [latest]. See *Upgrading FileMaker Server in place* (references/upgrading.md). Separately, this
 > runbook was last verified against 26.0.3.309 — anything newer may behave differently.
 
 If the fetch fails, say the check couldn't run and carry on — don't guess a version.
@@ -394,493 +397,24 @@ disaster-recovery `docker run` command (identical to Step 3, but pointing at `fm
 instead of `fmsdocker:prep`) somewhere the developer can find it — see
 `references/troubleshooting.md` for the full recreate-from-image snippet.
 
-## Step 6 — Patch Nginx (26.0.2 and earlier — check first on 26.0.3+)
+## Steps 6–9: after the install
 
-**This step is version-dependent. Check the FMS build before running it.**
+Run these after Step 5, in order, and commit the container again after each apt-level change.
+Each is version-dependent or optional, so check before running:
 
-- **26.0.2 and earlier:** run it as written below.
-- **26.0.3 and later:** Claris changed the approach. The 26.0.3 release notes say Linux installs
-  no longer need `NginxUpdate.sh`, so Ubuntu's own security updates to Nginx apply normally, and
-  the 26.0.3 package no longer ships `NginxUpdate.sh` at all. Seen directly during the 26.0.3
-  upgrade: the installer's pre-install step printed *"Removing Nginx software source… pin-priority…
-  signing key"* and deleted exactly what this step adds (`/etc/apt/sources.list.d/nginx.list`,
-  `/etc/apt/preferences.d/99nginx`, the nginx.org keyring). **Don't re-add them on 26.0.3+
-  without asking the developer** — the installer will just strip them again on the next upgrade,
-  and it's working against Claris's supported path. On a fresh 26.0.3+ install, skip this step
-  unless the wizard actually raises an Nginx CVE warning, and tell the developer which happened.
-  See the upgrade section for the one follow-on decision this creates on containers that were
-  patched under 26.0.2.
+- **Step 6 — Patch Nginx** (26.0.2 and earlier; check first on 26.0.3+)
+- **Step 7 — Promote the sample database** (if missing)
+- **Step 8 — Trusted local HTTPS certificate** (mkcert)
+- **Step 9 — Enable WebDirect / Web Publishing** (off by default; also Data API, OData, ODBC)
 
-```bash
-docker exec fms bash -c "
-apt-get install -y curl gnupg2 ca-certificates lsb-release ubuntu-keyring &&
-curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg &&
-echo \"deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/ubuntu \$(lsb_release -cs) nginx\" | tee /etc/apt/sources.list.d/nginx.list &&
-printf 'Package: *\nPin: origin nginx.org\nPin-Priority: 900\n' | tee /etc/apt/preferences.d/99nginx &&
-apt-get update &&
-apt-get install -y nginx
-"
-docker restart fms
-```
-
-Two things that trip people up here — full explanation in the reference file, short version:
-- This container has no `sudo` installed (you're already root via `docker exec`) — Claris's own
-  `NginxUpdate.sh` script assumes `sudo` exists and silently no-ops without it. The commands
-  above already have `sudo` stripped out.
-- After the apt upgrade, restart the whole **container** (`docker restart fms`), not
-  `systemctl restart nginx` inside it — that targets a different, disabled generic
-  `nginx.service` unit that conflicts with FMS's own directly-spawned Nginx process (which
-  already owns ports 80/443). A container restart makes `fmshelper` respawn its Nginx child
-  against the newly-installed binary correctly.
-
-Verify: `docker exec fms /usr/sbin/nginx -v` should report something well past 1.24.0.
-Re-commit the image (Step 5) after this succeeds.
-
-## Step 7 — Promote the sample database (if missing)
-
-There are two different "missing" outcomes — check which one you have before fixing anything:
-
-- **Stuck in staging** — the file exists hidden as `.Sample/en_FMServer_Sample` but was never
-  promoted. Fixed below.
-- **Absent entirely** — seen on a second run (FMS 26.0.2.219, arm64): `Data/Databases/Sample/`
-  was an empty directory, there was no `.Sample` staging file, and `find "/opt/FileMaker/FileMaker
-  Server" -iname '*.fmp12'` returned nothing. The cause is **not established** — it may be how
-  the wizard's "remove sample database" prompt was answered, or this Docker/arm64 package may not
-  ship one by default. Don't state either as fact. Treat it as a possible outcome that isn't
-  necessarily a broken install, tell the developer, and don't hunt for a fix that isn't there.
-  Confirming needs a run that deliberately answers "keep sample" and checks immediately.
-
-Check first:
-
-```bash
-docker exec fms bash -c "ls '/opt/FileMaker/FileMaker Server/Data/Databases/' 2>&1"
-```
-
-If `FMServer_Sample.fmp12` isn't there, it's likely stuck unpromoted in a hidden staging folder
-— common when installing on top of pre-existing `Data` (e.g. "load previous configuration"
-during a reinstall):
-
-```bash
-docker exec fms bash -c "
-cp '/opt/FileMaker/FileMaker Server/Data/Databases/.Sample/en_FMServer_Sample' '/opt/FileMaker/FileMaker Server/Data/Databases/FMServer_Sample.fmp12'
-chown fmserver:fmsadmin '/opt/FileMaker/FileMaker Server/Data/Databases/FMServer_Sample.fmp12'
-chmod 660 '/opt/FileMaker/FileMaker Server/Data/Databases/FMServer_Sample.fmp12'
-"
-docker restart fms
-```
-
-Swap `en_` for the developer's preferred locale prefix if not English. Confirm it actually
-opened by checking the log, not just that the file exists:
-
-```bash
-docker exec fms bash -c "tail -30 '/opt/FileMaker/FileMaker Server/Logs/Event.log' | grep -i sample"
-```
-
-Look for `Opened database "FMServer_Sample"`.
-
-## Step 8 — Set up a trusted local HTTPS certificate
-
-The Admin Console's default self-signed cert triggers browser warnings. Use `mkcert` for a
-locally-trusted certificate instead — but the certificate **import** path has a real bug worth
-knowing about upfront rather than discovering through trial and error.
-
-**The broken path (don't waste time on it):** generating a key externally (via `mkcert` or
-`openssl`, any cipher — unencrypted, PKCS#8/AES, legacy PKCS#1/3DES, legacy PKCS#1/AES-128, all
-tested) and importing with `fmsadmin certificate import <cert> --keyfile <key> --keyfilepass
-<pass>` reliably fails with `Cannot decrypt the private key file... with the password` (error
-20408), even when the key/password pair is independently verified correct with OpenSSL. This
-looks like a genuine bug or unsupported path specific to `--keyfile` external-key import.
-
-**Getting mkcert (once per Mac).** Check first: `command -v mkcert`. If it's missing:
-
-- **`brew` already installed** (`command -v brew`) → `brew install mkcert`.
-- **No Homebrew** → don't install Homebrew just for this; a system-wide package manager is a much
-  bigger ask than one binary. Use the direct download instead. It comes from the mkcert
-  maintainer's own stable redirect (documented in mkcert's release notes) and needs no sudo and
-  no package manager:
-
-  ```bash
-  mkdir -p ~/bin && cd ~/bin
-  curl -fsSL "https://dl.filippo.io/mkcert/latest?for=darwin/arm64" -o mkcert
-  chmod +x mkcert
-  file mkcert          # confirm a real Mach-O executable of plausible size before running it
-  ./mkcert -version
-  ```
-
-  Swap `darwin/arm64` for `darwin/amd64`, `linux/amd64` etc. to match the host.
-  `/usr/local/bin` is root-owned on stock macOS, so the binary stays in `~/bin/`. Call it by full
-  path (`~/bin/mkcert`) unless `~/bin` is actually on `PATH`. The commands below write `mkcert`;
-  substitute the full path where needed.
-
-**The working path:** let FMS generate its own key, and only bring your own signed certificate.
-Three places run commands here — label every handoff with which one:
-
-- **Developer's Mac terminal** (their own macOS shell): `mkcert -install` — it changes the macOS
-  trust store, so the developer runs it, not the agent, even though it's low-risk.
-- **Developer's container tab** (prompt `root@<hostname>:/#`, opened with `docker exec -it fms
-  bash`): the two `fmsadmin` commands — both ask for the Admin Console username and password.
-- **Agent** (non-interactive, on the Mac): everything else.
-
-```bash
-# 1. DEVELOPER, Mac terminal — creates mkcert's local CA if it doesn't exist yet, and trusts it.
-#    This must come first: step 3 signs with the CA files this creates.
-mkcert -install
-
-# 2. DEVELOPER, container tab (root@<hostname>:/#) — FMS generates its own CSR + key:
-"/opt/FileMaker/FileMaker Server/Database Server/bin/fmsadmin" certificate create localhost --keyfilepass <a passphrase>
-# answer y, then the Admin Console username/password when prompted
-# creates serverRequest.pem and serverKey.pem in CStore/ — leave serverKey.pem alone
-
-# 3. AGENT, Mac — pull the CSR out and sign it with mkcert's CA, injecting a SAN list
-#    (Chrome/Safari require SAN entries — a CN-only cert is rejected regardless of match):
-docker cp fms:"/opt/FileMaker/FileMaker Server/CStore/serverRequest.pem" ./serverRequest.pem
-CAROOT=$(mkcert -CAROOT)
-ls "$CAROOT/rootCA.pem" "$CAROOT/rootCA-key.pem"   # both must exist — if not, step 1 hasn't run
-printf 'subjectAltName=DNS:localhost,DNS:fms,IP:127.0.0.1,IP:::1\n' > san.ext
-openssl x509 -req -in serverRequest.pem \
-  -CA "$CAROOT/rootCA.pem" -CAkey "$CAROOT/rootCA-key.pem" -CAcreateserial \
-  -out serverSigned.pem -days 730 -extfile san.ext
-
-# 4. AGENT, Mac — copy the signed cert into the CStore volume, not /tmp (an unclean restart
-#    wipes /tmp — see "/tmp contents vanished" in the troubleshooting reference):
-docker cp serverSigned.pem "fms:/opt/FileMaker/FileMaker Server/CStore/serverSigned.pem"
-docker exec fms chown fmserver:fmsadmin "/opt/FileMaker/FileMaker Server/CStore/serverSigned.pem"
-
-# 5. DEVELOPER, container tab — import it. No --keyfile: FMS already has the matching key from step 2.
-"/opt/FileMaker/FileMaker Server/Database Server/bin/fmsadmin" certificate import "/opt/FileMaker/FileMaker Server/CStore/serverSigned.pem" --keyfilepass <same passphrase>
-```
-
-Restart the container when prompted (`docker restart fms`). Any `/etc/hosts` edit for a local
-DNS alias is also the developer's to make, in their Mac terminal (see the reference file for a
-subtle trailing-newline trap there).
-
-To add more SAN names later (e.g. a custom local hostname), re-sign the *same* CSR with an
-expanded SAN list and re-import with the same passphrase — no need to redo `certificate create`.
-
-Re-commit the image (Step 5) once the certificate is confirmed working.
-
-## Step 9 — Enable WebDirect / Web Publishing (optional, but off by default)
-
-If the developer wants WebDirect, Custom Web Publishing, the Data API, or OData, don't assume
-any of them are on just because the install finished cleanly — **every publishing component is
-disabled by default** even after a full, successful assisted-install. Trying to load
-`/fmi/webd` against a fresh install returns a `502 Bad Gateway` — Nginx is proxying correctly,
-but there's nothing listening on the other end, because the Web Publishing Engine process was
-never started.
-
-Confirm the actual state rather than guessing from the install wizard's behaviour:
-
-```bash
-docker exec fms bash -c "cat '/opt/FileMaker/FileMaker Server/Admin/conf/deployment.xml'" | grep -oE '<component[^>]*name=\"wpe\"[^>]*>'
-```
-
-If it shows `enabled="no"`, turn it on — either in Admin Console (a toggle under Configuration),
-or via the CLI (interactive, needs a real TTY and Admin Console credentials, same pattern as
-Step 4):
-
-```bash
-docker exec -it fms bash
-# then, inside the container:
-"/opt/FileMaker/FileMaker Server/Database Server/bin/fmsadmin" enable wpe
-```
-
-**Startup delay is real but variable — don't trust a single immediate check, from either
-direction.** Confirmed across two separate restarts: OData and the Data API sometimes come up
-within ~2-3 seconds of the database engine starting, and sometimes take 30-45+ seconds — same
-`enabled="yes"` config, same container, just different timing between restarts. There's no
-fixed number worth hardcoding as "wait N seconds." Poll with retries over roughly a minute
-before concluding anything is actually broken:
-
-```bash
-curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/fmi/webd                          # WebDirect
-curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/fmi/odata/v4/                      # OData
-curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/fmi/data/vLatest/productInfo       # Data API
-```
-
-This cuts both ways — it also means a developer who manually started a component after finding
-it apparently "off" isn't proof anything had actually reverted. Before concluding a setting
-didn't persist, check `deployment.xml`'s `enabled` attribute first (see above) — if it already
-says `yes`, the config was fine and what looked like a dropped setting was almost certainly just
-this startup-timing variability, not an actual regression. Restarting again and polling with
-retries (rather than a single immediate check) is the way to tell the two apart.
-
-The same `enabled="no"`-by-default pattern applies to the other components listed in
-`deployment.xml` (`xdbc` for ODBC/JDBC, `fmdapi` for the Data API, `odata` for OData) — check
-and enable whichever the developer actually needs; don't assume any of them came on with the
-base install.
+Full commands and checks: [references/post-install.md](references/post-install.md).
 
 ## Upgrading FileMaker Server in place
 
-Verified once, 2026-09-24: 26.0.2.219 → 26.0.3.309 on the arm64/macOS setup above, with the
-mkcert certificate, WebDirect/Data API enabled and OttoFMS installed — all survived. The
-upgrade is the same `apt install` of the new `.deb` over the running install; what makes it a
-Docker job is doing it so it can be rolled back, and not losing it afterwards.
-
-**Don't use Admin Console's own update prompt for this.** Stick to the steps below so the
-snapshot and volume backup exist before anything changes.
-
-**Agree the downtime first.** U3 stops the container, and U5 restarts FMS — connected FileMaker
-clients get disconnected both times. How long depends on data size (the verified run had tiny
-volumes, so the U3 stop was brief; the U5 outage wasn't timed). Ask the developer when that's
-acceptable rather than starting straight away.
-
-### U1 — Get the new package and compare it with the old one
-
-The developer supplies the `fms_<version>_Ubuntu24_arm64.zip` (licence-linked download — see the
-staleness check). Unzip it next to the previous package and diff what matters:
-
-```bash
-diff fms_<old>/Docker/Dockerfile fms_<new>/Docker/Dockerfile        # changed → the prep image may need rebuilding; stop and plan that first
-diff "fms_<old>/Assisted Install.txt" "fms_<new>/Assisted Install.txt"
-ls fms_<old> fms_<new>                                               # helper scripts added/removed
-```
-
-26.0.2 → 26.0.3: Dockerfile identical; `Assisted Install.txt` gained two accessibility keys;
-`NginxUpdate.sh` was dropped (see Step 6). Also compare the package's dependencies against the
-installed ones once the `.deb` is in the container (U4).
-
-**Old package no longer on disk?** Compare the new Dockerfile against the running container
-instead. Its `FROM` line must match the container's OS (`grep ^FROM fms_<new>/Docker/Dockerfile`
-vs `docker exec fms grep ^VERSION_ID /etc/os-release`), and every package in its
-`apt-get install` list should already be installed:
-
-```bash
-awk '/apt-get install --no-install-recommends -y/{f=1;next} f{line=$0; gsub(/[\\&]/,"",line); n=split(line,a," "); for(i=1;i<=n;i++) print a[i]; if($0 ~ /&&/) exit}' fms_<new>/Docker/Dockerfile \
-| docker exec -i fms xargs dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 2>&1 | grep -v '^ii '
-```
-
-No output means everything is installed; any line printed is a missing package. (Verified
-2026-09-24 against the 26.0.3.309 Dockerfile: all 24 present, and a deliberately fake name was
-reported. The list goes through `xargs` because zsh — macOS's default shell — doesn't split an
-unquoted `$var` into words, which silently turns a package list into one bogus name.) Anything
-missing means the prep image is out of date for this release — stop and plan that before going
-further.
-
-**Skipping a release, or a bigger jump.** Only a single step (26.0.2 → 26.0.3) has been run.
-For a jump across several releases:
-
-- Read the release notes for *every* release in between, not just the newest — changes like
-  26.0.3's Nginx one land in the release that introduced them.
-- Apply version-dependent steps by what the jump *crosses*. Going from 26.0.2 or earlier to
-  anything 26.0.3 or later means Step 6 no longer applies and the Nginx follow-on decision below
-  does.
-- Check Claris's installation guide for the new release for any supported-upgrade-path limits
-  before assuming a direct jump is allowed. This runbook doesn't know them.
-- **A new major version, or a Dockerfile whose `FROM` changes**, may not upgrade in place with
-  `apt` at all. That would mean building a new prep image and installing into a new container
-  on the same (backed-up) volumes — a path that hasn't been run. Tell the developer it's
-  untested and plan it with them rather than improvising.
-
-### U2 — Snapshot the container's software
-
-```bash
-STAMP=$(date '+%Y%m%d-%H%M')
-docker exec fms bash -c "rm -f /tmp/*.deb && apt-get clean"
-docker commit --message "FMS <old build> before upgrade - $STAMP" fms fmsdocker:pre-upgrade-$STAMP
-docker tag fmsdocker:pre-upgrade-$STAMP fmsdocker:installed
-echo "rollback tag: fmsdocker:pre-upgrade-$STAMP"
-```
-
-Set `STAMP` once and reuse it. Building the timestamp separately for the commit and the tag
-breaks the tag whenever the minute rolls over between the two commands. Shell variables don't
-survive between separate agent tool calls, so run all of these lines in one call and note the
-printed tag name for rollback. The dated tag is the rollback point. It stays put when `:installed` moves on after the upgrade.
-
-### U3 — Back up the four data volumes (a commit doesn't include them)
-
-Databases, licence, certificates and admin account live in the volumes, not the image. Stop the
-container so no database is open mid-copy, archive each volume with a throwaway container from
-the already-present `fmsdocker:prep` image (no extra image pull), then start it again.
-
-Choose the backup folder with the developer — somewhere on the Mac they'll find again, and under
-`/Users` so Docker Desktop can mount it (the verified run used a `backups/` folder next to the
-installer packages). Use an absolute path. If `fmsdocker:prep` is gone (`docker images
-fmsdocker`), any image with `tar` works for the throwaway container, e.g. `fmsdocker:installed`.
-
-```bash
-B="<absolute backup folder>/pre-<new version>-$(date '+%Y%m%d-%H%M')"; mkdir -p "$B"
-docker stop -t 120 fms
-for v in fms-cstore fms-data fms-logs fms-wpeconf; do
-  docker run --rm -v $v:/src:ro -v "$B":/dst fmsdocker:prep tar -czf /dst/$v.tgz -C /src .
-done
-docker start fms
-for f in "$B"/*.tgz; do echo "$(basename $f): $(tar -tzf $f | wc -l) entries"; done
-echo "backup folder: $B"
-```
-
-Run the whole block in one call (it relies on `$B` throughout), and note the printed backup
-folder — a rollback needs that exact path later.
-
-Check `fms-data.tgz` actually lists the `.fmp12` files before moving on
-(`tar -tzf "$B/fms-data.tgz" | grep -i fmp12`). Confirm the Admin Console answers again after
-the start (`curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/admin-console/`).
-
-### U4 — Copy the package in and dry-run it
-
-```bash
-docker cp fms_<new>/filemaker-server-<new build>-arm64.deb fms:/tmp/
-docker exec fms bash -c "apt-get update -qq && apt-get install -s /tmp/filemaker-server-<new build>-arm64.deb | grep -E '^(Inst|Remv)|upgraded'"
-```
-
-Expect only `Inst filemaker-server [<old>] (<new> …)` and nothing under `Remv`. If the dry run
-wants to remove packages or pull in a large set of new ones, stop and show the developer before
-installing. (26.0.2 → 26.0.3: one package upgraded, nothing removed or added — the new
-dependency list only swapped OpenCV for `libopenjp2-7`, already present.)
-
-### U5 — Run the upgrade (interactive — developer's terminal)
-
-```bash
-docker exec -it fms bash -c "apt install /tmp/filemaker-server-<new build>-arm64.deb"
-```
-
-Same handoff rules as Step 4: name the exact terminal tab. The licence agreement prompt is the
-developer's to answer — never answer it for them. The installer then preserves the existing
-deployment on its own; on 26.0.3 it printed *"Current Admin Console account information will be
-preserved"* and *"Preserving current … deployment configuration"*, kept the existing MachineID,
-and kept a copy of the old keystore as `CStore/keystore_26.0.2.backup`.
-
-**Output that looks alarming but isn't:**
-
-- `prerm: … /usr/bin/crontab: No such file or directory` — the old package's removal script tries
-  to delete its entry from root's crontab, and the container has no `cron`. There was nothing to
-  delete; the upgrade carries on.
-- *"Removing Nginx software source / pin-priority / signing key"* (26.0.3+) — expected; see Step 6.
-- The container-bridge Admin Console URL and "add current user to fmsadmin … restart" — same
-  bare-metal boilerplate as Step 4. Ignore both.
-- The progress bar stops at 80% and returns to the prompt. That's normal — check with `dpkg`
-  (U6), not the bar.
-
-### U6 — Verify
-
-```bash
-docker exec fms bash -c "dpkg -l filemaker-server | tail -1; dpkg --audit; systemctl is-active fmshelper"
-curl -sk -o /dev/null -w "%{http_code}\n" https://localhost[:port]/admin-console/signin
-curl -sk https://localhost[:port]/fmi/data/vLatest/productInfo
-echo | openssl s_client -connect localhost:<HTTPS_PORT> -servername localhost 2>/dev/null | openssl x509 -noout -issuer
-docker exec fms bash -c "ls '/opt/FileMaker/FileMaker Server/Data/Databases/'"
-```
-
-Expect: `ii` with the new build, no `dpkg --audit` output, `active`, 200, a Data API `OK`, the
-mkcert issuer (not FMS's default), and the databases still present. If OttoFMS is installed,
-check `https://localhost[:port]/otto/` too. Then have the developer sign in to Admin Console
-and confirm the databases are open and the version shown matches.
-
-### U7 — Clean up, then commit
-
-**Delete the `.deb` from `/tmp` *before* committing.** Committing first bakes the ~540MB
-installer into the image — seen on the 26.0.3 run (6.6GB image vs 6.06GB after redoing it). A
-re-commit after deleting does shrink it, because each commit captures the container's full
-diff from its base image, not a diff on top of the previous commit.
-
-```bash
-docker exec fms bash -c "rm -f /tmp/filemaker-server-*.deb && apt-get clean"
-docker commit --message "FMS <new build> upgraded in place - $(date '+%Y-%m-%d %H:%M')" fms fmsdocker:<new build>
-docker tag fmsdocker:<new build> fmsdocker:installed
-```
-
-The disaster-recovery `docker run` in the troubleshooting reference now restores the new build.
-
-### One follow-on decision when upgrading from 26.0.2 or earlier to 26.0.3+ (Nginx)
-
-A container patched under 26.0.2 (Step 6) keeps the newer nginx.org build after the upgrade
-(1.30.4 on the verified run), but 26.0.3 removed the nginx.org repository, so that build now
-receives **no further updates**: Ubuntu's own `nginx` (1.24.0 with backported security fixes)
-has a lower version number, so apt never replaces it. Check with
-`docker exec fms apt-cache policy nginx`. Don't pick for the developer — present both:
-
-- **Follow Claris's 26.0.3 model — switch to Ubuntu's `nginx`.** Gets Ubuntu's ongoing security
-  fixes. CVE scanners reading the version string may still flag "1.24.0", even though Ubuntu
-  backports fixes into it. Verified 2026-09-24 (procedure below).
-- **Keep the nginx.org build:** newer today, but frozen — and re-adding the repository gets
-  stripped again by the next FMS upgrade. Not run.
-
-#### Switching to Ubuntu's `nginx` (verified)
-
-The rollback point is the `fmsdocker:<new build>` commit from U7, as long as nothing has changed
-since — otherwise commit first. Dry-run, taking the exact version from apt rather than typing it:
-
-```bash
-docker exec fms bash -c 'apt-get update -qq; apt-cache madison nginx'   # the Ubuntu line, e.g. 1.24.0-2ubuntu7.18
-docker exec fms bash -c 'apt-get install -s --allow-downgrades nginx=<ubuntu version> | grep -E "^(Inst|Remv)|DOWNGRADED"'
-```
-
-Expect `nginx` downgraded, `nginx-common` newly installed, nothing removed. Then install with
-**service starts blocked**. Ubuntu's package tries to (re)start the generic `nginx.service`,
-which would fight FMS's own Nginx for ports 80/443 (the same conflict as Step 6's
-`systemctl restart` warning). A `policy-rc.d` returning 101 is the standard Debian/Docker way to
-stop package scripts starting services:
-
-```bash
-docker exec fms bash -c '
-printf "#!/bin/sh\nexit 101\n" > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d
-DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades \
-  -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold nginx=<ubuntu version>
-rm -f /usr/sbin/policy-rc.d'
-docker exec fms ls /usr/sbin/policy-rc.d   # must fail with "No such file" — left behind, it silently blocks every future service start from apt
-```
-
-**Always remove `policy-rc.d` as its own step, never behind `set -e` or `&&` after a status
-check.** Seen on the verified run: `systemctl is-active nginx` correctly returned `inactive`
-(exit code 3), a `set -e` script aborted on it, and the `rm` after it never ran.
-
-Expected output, all fine: `policy-rc.d returned 101, not running 'restart nginx.service'`, and
-*"Not attempting to start NGINX, port 80 is already in use"*. Ubuntu's package replaces the
-default files under `/etc/nginx/` (`nginx.conf`, `mime.types`, `fastcgi_params`); FMS doesn't use
-them — its Nginx runs from `NginxServer/conf/fms_nginx.conf`.
-
-Then check, restart and verify:
-
-```bash
-docker exec fms bash -c 'systemctl is-enabled nginx; /usr/sbin/nginx -v; dpkg --audit'   # disabled; nginx/1.24.0 (Ubuntu); no output
-docker restart -t 135 fms
-docker exec fms bash -c 'ps -eo args | grep "[n]ginx: master"'   # /usr/sbin/nginx -c …/fms_nginx.conf
-```
-
-Run the U6 checks, plus `grep 'Opened database' …/Logs/Event.log | tail` with a timestamp after
-the restart. On the verified run the Admin Console was back in about 20 seconds; Data API,
-WebDirect, OttoFMS and the mkcert certificate all came back unchanged. Finish with
-`apt-get clean` and a commit (e.g. `fmsdocker:<new build>-ubuntu-nginx`, then retag
-`:installed`).
-
-### Rolling back
-
-Verified 2026-09-24 in an isolated test container (26.0.3.309 → 26.0.2.219): recreated from the
-dated `pre-upgrade` tag onto volumes restored from the U3 tars, it came back as 26.0.2.219 in
-about 20 seconds, with `fmshelper` active, the database opened and the Data API answering. The
-test ran with `--network none` beside the live server, so the steps below were proven on copies;
-a rollback of the real container hasn't been needed yet.
-
-**Rolling back replaces the running container, and possibly the data — confirm with the developer
-before starting, and say which of the two cases below applies.**
-
-1. **Keep the failed state first.** Commit the current container before removing it, so what
-   went wrong can still be looked at later:
-   ```bash
-   docker exec fms bash -c "rm -f /tmp/*.deb && apt-get clean"
-   docker commit --message "failed upgrade state - $(date '+%Y-%m-%d %H:%M')" fms fmsdocker:failed-$(date '+%Y%m%d-%H%M')
-   ```
-2. **Record the settings** with the `docker inspect` commands in the troubleshooting reference
-   (ports, memory, CPUs, mounts), then stop and remove the container:
-   ```bash
-   docker stop -t 135 fms && docker rm fms
-   ```
-3. **Data too? Restore the volumes** from U3 — only if the upgrade changed or damaged data, not by
-   default: the upgrade itself preserves the volumes. The container must be stopped (it is, after
-   step 2). For each of the four volumes:
-   ```bash
-   docker run --rm -v <vol>:/dst -v "<U3 backup folder>":/src fmsdocker:prep sh -c "rm -rf /dst/* /dst/.[!.]* ; tar -xzf /src/<vol>.tgz -C /dst"
-   ```
-   `<U3 backup folder>` is the absolute path U3 printed — the `$B` variable from U3 won't exist in
-   a later shell. This empties the volume before extracting, so it also works over a volume that still holds
-   the newer data. Check it with `find ! -type d`, not `find -type f`: the backups include
-   symlinks (OttoFMS's file-manager links in `fms-data`) and a named pipe (`.passphrase` in
-   `fms-cstore`), which `-type f` skips — that looked like missing files on the verified run
-   until a proper comparison showed every entry restored.
-4. **Recreate** with the disaster-recovery `docker run` in the troubleshooting reference, using the
-   recorded settings and the `fmsdocker:pre-upgrade-<STAMP>` tag U2 printed in place of
-   `fmsdocker:installed`.
-5. **Verify** with U6, expecting the *old* build, then point `:installed` back at it:
-   `docker tag fmsdocker:pre-upgrade-<STAMP> fmsdocker:installed`.
+Snapshot the container, back up the four volumes, dry-run the new package, upgrade, verify,
+then commit. Rollback is a re-tag of the snapshot. Agree the downtime with the developer
+first, and don't use Admin Console's own update prompt. Full runbook (U1–U7, the Nginx
+follow-on, rolling back): [references/upgrading.md](references/upgrading.md).
 
 ## Verifying the whole install
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.0] — 2026-10-11
+
+Update to Anthropic's skill authoring best practices, using `cadenceux-skill-creator` 2.0.0.
+
+### Verified current (2026-10-11)
+
+- Claris's updater feed reports **26.0.3** as the latest FileMaker Server for Linux, the build this runbook was verified on (26.0.3.309).
+
+### Changed
+
+- **SKILL.md body cut from 900+ to about 430 lines.** Steps 6–9 (Nginx, sample database, trusted HTTPS, WebDirect) moved to `references/post-install.md`; the upgrade runbook (U1–U7, Nginx follow-on, rollback) moved to `references/upgrading.md`. Both are linked directly from SKILL.md and start with a contents list; `references/troubleshooting.md` gained one too.
+- Frontmatter to the CadenceUX standard: `license: CC-BY-4.0`, `metadata.author`, three-part version, compatibility stating the real requirements.
+- `.claude-plugin/plugin.json` added for the `cadenceux` marketplace.
+
 ## v1.5 — 2026-09-24
 
 Works through the eval findings left over from v1.4. It also runs the rollback for real, in an

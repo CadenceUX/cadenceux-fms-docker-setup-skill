@@ -3,6 +3,20 @@
 Organized by symptom. Each section explains *why* it happens, not just the fix — useful when
 the exact wording of an error differs slightly from what's quoted here.
 
+## Contents
+- "FileMaker Server disappeared" / commands say the binary doesn't exist
+- Admin Console reports a wildly wrong disk-usage percentage (e.g. 89-90% when volumes are barely used)
+- "Cannot decrypt the private key file... with the password" (error 20408) during certificate import
+- Local DNS alias (`/etc/hosts`) silently doesn't resolve
+- `/tmp` contents vanished inside the container
+- Container is stopped/exited after Docker Desktop was quit or the Mac slept/restarted
+- Nginx patch: `sudo` commands silently fail / do nothing
+- Admin Console loads in one browser but `http://localhost/admin-console` gives a 404 in another
+- Committed image is hundreds of MB bigger than expected
+- `command not found` / `No such file` for a Linux command during an interactive step
+- Sample database not showing up
+- WebDirect / `/fmi/webd` returns 502 Bad Gateway
+
 ## "FileMaker Server disappeared" / commands say the binary doesn't exist
 
 **Symptom:** `fmshelper`/`fmsadmin` missing, `dpkg -l | grep filemaker` shows nothing, but the

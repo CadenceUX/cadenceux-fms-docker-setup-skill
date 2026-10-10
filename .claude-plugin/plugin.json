@@ -1,0 +1,23 @@
+{
+  "name": "cadenceux-fms-docker-setup",
+  "displayName": "FileMaker Server on Docker",
+  "version": "1.6.0",
+  "description": "Installs, upgrades and certifies Claris FileMaker Server in Docker on macOS, from Claris's arm64 Ubuntu build, with snapshot-based upgrades and rollback.",
+  "author": {
+    "name": "Darrin Southern",
+    "url": "https://cadenceux.com.au"
+  },
+  "homepage": "https://github.com/CadenceUX/cadenceux-fms-docker-setup-skill",
+  "repository": "https://github.com/CadenceUX/cadenceux-fms-docker-setup-skill",
+  "license": "CC-BY-4.0",
+  "keywords": [
+    "filemaker",
+    "claris",
+    "filemaker-server",
+    "docker",
+    "devops"
+  ],
+  "skills": [
+    "./"
+  ]
+}

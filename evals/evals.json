@@ -32,5 +32,6 @@
       "expected_to_trigger": false,
       "why": "Not Docker-related; this skill is specifically Docker-container installs, not general Windows/VM hosting."
     }
-  ]
+  ],
+  "version": "1.6.0"
 }
