@@ -19,6 +19,19 @@
     {
       "prompt": "I tried installing FMS in Docker last month and gave up. Can you set it up properly from scratch now?",
       "expected": "Triggers the skill. Pre-flight check 7 finds leftover fms-* volumes, an old container or fmsdocker images, and explains that docker volume create would silently reuse old data. Asks whether to reuse, rename or back up and remove, and removes nothing without an explicit yes. Confirms the real container name, and fills Step 3's MEM, CPUS and port placeholders from the pre-flight results instead of fixed values."
+    },
+    {
+      "id": "skill-update-check",
+      "mode": "any",
+      "prompt": "(First request this session; the repo's VERSION file says a newer release exists.) Use cadenceux-fms-docker-setup for my next task.",
+      "must": [
+        "fetches the repo VERSION once and starts the answer with the skill-update notice",
+        "skips the check when fmp-dev-orchestrator is installed"
+      ],
+      "must_not": [
+        "repeats the notice later in the session",
+        "blocks the task if the fetch fails"
+      ]
     }
   ],
   "near_misses": [
@@ -33,5 +46,5 @@
       "why": "Not Docker-related; this skill is specifically Docker-container installs, not general Windows/VM hosting."
     }
   ],
-  "version": "1.6.0"
+  "version": "1.6.1"
 }
