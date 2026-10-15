@@ -19,7 +19,7 @@ compatibility: >-
   linked FileMaker Server Linux download.
 metadata:
   author: Darrin Southern, CadenceUX
-  version: "1.6.1"
+  version: "1.6.2"
 ---
 
 # FileMaker Server on Docker — Setup
@@ -438,7 +438,7 @@ recovery steps, and the `/etc/hosts` trailing-newline trap.
 
 Once per session, on the first request this skill handles: fetch
 `https://github.com/CadenceUX/cadenceux-fms-docker-setup-skill/raw/main/VERSION` and compare it with this skill's version
-(1.6.1). If newer, start the answer with:
+(1.6.2). If newer, start the answer with:
 
 > ⚠️ **Skill update available:** this skill is v[installed]; v[latest] is at
 > https://github.com/CadenceUX/cadenceux-fms-docker-setup-skill/releases
