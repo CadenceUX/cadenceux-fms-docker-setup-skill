@@ -26,7 +26,7 @@
       "prompt": "(First request this session; the repo's VERSION file says a newer release exists.) Use cadenceux-fms-docker-setup for my next task.",
       "must": [
         "fetches the repo VERSION once and starts the answer with the skill-update notice",
-        "skips the check when fmp-dev-orchestrator is installed"
+        "skips the check when cadenceux-dx is installed"
       ],
       "must_not": [
         "repeats the notice later in the session",

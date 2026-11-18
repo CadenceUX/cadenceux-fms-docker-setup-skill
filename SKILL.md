@@ -19,7 +19,7 @@ compatibility: >-
   linked FileMaker Server Linux download.
 metadata:
   author: Darrin Southern, CadenceUX
-  version: "1.6.2"
+  version: "1.6.3"
 ---
 
 # FileMaker Server on Docker — Setup
@@ -438,15 +438,14 @@ recovery steps, and the `/etc/hosts` trailing-newline trap.
 
 Once per session, on the first request this skill handles: fetch
 `https://github.com/CadenceUX/cadenceux-fms-docker-setup-skill/raw/main/VERSION` and compare it with this skill's version
-(1.6.2). If newer, start the answer with:
+(1.6.3). If newer, start the answer with:
 
 > ⚠️ **Skill update available:** this skill is v[installed]; v[latest] is at
 > https://github.com/CadenceUX/cadenceux-fms-docker-setup-skill/releases
 
 Skip silently if the fetch fails. If the skill was installed as a plugin, suggest
-`claude plugin update` (or the Plugins page on claude.ai) instead. If `fmp-dev-orchestrator` is
-installed, skip this check: its stack check covers every CadenceUX skill, plus Claris ADT,
-FileMaker Pro and the ADT project.
+`claude plugin update` (or the Plugins page on claude.ai) instead. If `cadenceux-dx` is installed, skip this check: its stack check covers every CadenceUX skill, plus Claris ADK,
+FileMaker Pro and the ADK project.
 
 ## Relationship to other skills
 
